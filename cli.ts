@@ -1,8 +1,7 @@
 import { bold } from "https://deno.land/std@0.125.0/fmt/colors.ts";
 import { basename, resolve } from "https://deno.land/std@0.125.0/path/mod.ts";
-import { parse } from "https://deno.land/std@0.125.0/flags/mod.ts";
 import { readImportMap } from "./server/config.ts";
-import { getFlag } from "./lib/flags.ts";
+import { parse } from "./lib/flags.ts";
 import { existsDir, findFile } from "./lib/fs.ts";
 import log from "./lib/log.ts";
 import { serveDir } from "./lib/serve.ts";
@@ -38,7 +37,7 @@ Options:
 `;
 
 async function main() {
-  const { _: args, ...options } = parse(Deno.args);
+  const { args, options } = parse();
 
   // check deno version
   const [major, minor, patch] = minDenoVersion.split(".").map((p) => parseInt(p));
@@ -49,7 +48,7 @@ async function main() {
     currentMajor < major || (currentMajor === major && currentMinor < minor) ||
     (currentMajor === major && currentMinor === minor && currentPatch < patch)
   ) {
-    log.fatal(`Aleph.js requires Deno v${minDenoVersion} or later`);
+    log.fatal(`Aleph.js requires Deno v${minDenoVersion} or higher.`);
   }
 
   // prints aleph.js version
@@ -91,7 +90,7 @@ async function main() {
   // invoke `init` command
   if (command === "init") {
     const { default: init } = await import(`./commands/init.ts`);
-    await init(options?.template, args[0]);
+    await init(args[0], options?.template);
     return;
   }
 
@@ -100,12 +99,6 @@ async function main() {
     const { default: upgrade } = await import(`./commands/upgrade.ts`);
     await upgrade(options.v || options.version || args[0] || "latest");
     return;
-  }
-
-  // set log level
-  const logLevel = getFlag(options, ["L", "log-level"], "info");
-  if (logLevel === "debug") {
-    log.setLevel("debug");
   }
 
   let importMapFile: string | undefined;
@@ -120,7 +113,7 @@ async function main() {
   });
   const output = (new TextDecoder()).decode(await p.output());
   const { denoDir } = JSON.parse(output);
-  if (util.isString(denoDir)) {
+  if (util.isFilledString(denoDir)) {
     Deno.env.set("DENO_DIR", denoDir);
   }
   p.close();
@@ -194,10 +187,15 @@ async function runCli(command: string, version: string, denoConfigFile?: string,
     "--allow-env",
     "--allow-net",
     "--allow-read",
+    "--allow-write",
     "--no-check",
     "--quiet",
     "--location=http://localhost",
   ];
+  const devPort = Deno.env.get("ALEPH_DEV_PORT");
+  if (devPort) {
+    cmd.push(`--reload=http://localhost:${devPort}/`);
+  }
   if (denoConfigFile) {
     cmd.push("--config", denoConfigFile);
   }

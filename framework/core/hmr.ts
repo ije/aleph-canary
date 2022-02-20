@@ -1,14 +1,14 @@
 import events from "./events.ts";
 
+// ESM Hot Module Replacement (ESM-HMR) Specification
+// https://github.com/withastro/esm-hmr
+
 class Module {
   private _specifier: string;
-  private _isAccepted: boolean = false;
-  private _isLocked: boolean = false;
+  private _isAccepted = false;
+  private _isDeclined = false;
+  private _isLocked = false;
   private _acceptCallbacks: CallableFunction[] = [];
-
-  get specifier() {
-    return this._specifier;
-  }
 
   constructor(specifier: string) {
     this._specifier = specifier;
@@ -27,25 +27,46 @@ class Module {
     }
   }
 
+  decline(): void {
+    this._isDeclined = true;
+    this.accept();
+  }
+
   lock(): void {
     this._isLocked = true;
   }
 
-  async applyUpdate(specifier: string) {
+  async applyUpdate() {
+    if (this._isDeclined) {
+      location.reload();
+      return;
+    }
     try {
-      const module = await import(specifier.slice(1) + "?t=" + Date.now());
-      this._acceptCallbacks.forEach((cb) => cb(module));
-    } catch (e) {
+      const url = this._specifier.slice(1) + (this._specifier.endsWith(".css") ? "?module&" : "?") + "t=" + Date.now();
+      const module = await import(url);
+      this._acceptCallbacks.forEach((cb) => cb({ module }));
+    } catch (_e) {
       location.reload();
     }
   }
 }
 
-let modules: Map<string, Module> = new Map();
-let messageQueue: string[] = [];
+export default function createHotContext(specifier: string) {
+  if (modules.has(specifier)) {
+    const mod = modules.get(specifier)!;
+    mod.lock();
+    return mod;
+  }
+  const mod = new Module(specifier);
+  modules.set(specifier, mod);
+  return mod;
+}
+
+const modules: Map<string, Module> = new Map();
+const messageQueue: string[] = [];
 let conn: WebSocket | null = null;
 
-function sendMessage(msg: any) {
+function sendMessage(msg: Record<string, unknown>) {
   const json = JSON.stringify(msg);
   if (!conn || conn.readyState !== WebSocket.OPEN) {
     messageQueue.push(json);
@@ -54,17 +75,17 @@ function sendMessage(msg: any) {
   }
 }
 
-export function connect() {
-  const { location } = window as any;
+function connect() {
+  const { location } = window;
   const { protocol, host } = location;
   const wsUrl = (protocol === "https:" ? "wss" : "ws") + "://" + host + "/-/HMR";
   const ws = new WebSocket(wsUrl);
-  const contact = (callback: () => void) => {
+  const ping = (callback: () => void) => {
     setTimeout(() => {
       const ws = new WebSocket(wsUrl);
       ws.addEventListener("open", callback);
       ws.addEventListener("close", () => {
-        contact(callback); // retry
+        ping(callback); // retry
       });
     }, 500);
   };
@@ -85,36 +106,34 @@ export function connect() {
       }, 500);
     } else {
       // reload the page when re-connected
-      contact(() => location.reload());
+      ping(() => location.reload());
     }
   });
 
   ws.addEventListener("message", ({ data }: { data?: string }) => {
     if (data) {
       try {
-        const { type, specifier, routePattern, refreshPage } = JSON.parse(data);
-        if (refreshPage === true) {
-          location.reload();
-          return;
-        }
+        const { type, specifier, routePattern } = JSON.parse(data);
         switch (type) {
-          case "add":
+          case "create": {
             if (routePattern) {
-              events.emit("add-route", { pattern: routePattern, specifier });
+              events.emit("create-route", { pattern: routePattern, specifier });
             }
             break;
-          case "modify":
+          }
+          case "modify": {
             const mod = modules.get(specifier);
             if (mod) {
-              mod.applyUpdate(specifier);
+              mod.applyUpdate();
             }
             break;
+          }
           case "remove":
-            if (modules.has(specifier)) {
-              modules.delete(specifier);
-            }
-            if (routePattern) {
-              events.emit("remove-route", specifier);
+            {
+              if (modules.has(specifier)) {
+                modules.delete(specifier);
+              }
+              events.emit("remove-route", { specifier });
             }
             break;
         }
@@ -126,13 +145,4 @@ export function connect() {
   });
 }
 
-export default function createHotContext(specifier: string) {
-  if (modules.has(specifier)) {
-    const mod = modules.get(specifier)!;
-    mod.lock();
-    return mod;
-  }
-  const mod = new Module(specifier);
-  modules.set(specifier, mod);
-  return mod;
-}
+addEventListener("load", connect);

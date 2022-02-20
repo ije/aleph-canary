@@ -1,25 +1,12 @@
 export default {
-  isNumber(a: any): a is number {
-    return typeof a === "number" && !isNaN(a);
-  },
-  isString(a: any): a is string {
-    return typeof a === "string";
-  },
-  isFilledString(a: any): a is string {
+  isFilledString(a: unknown): a is string {
     return typeof a === "string" && a.length > 0;
   },
-  isArray(a: any): a is Array<any> {
-    return Array.isArray(a);
-  },
-  isFilledArray(a: any): a is Array<any> {
+  isFilledArray(a: unknown): a is Array<unknown> {
     return Array.isArray(a) && a.length > 0;
   },
-  isPlainObject<T = Record<string, any>>(a: any): a is T {
-    return typeof a === "object" && a !== null && Array.isArray(a) &&
-      Object.getPrototypeOf(a) === Object.prototype;
-  },
-  isFunction(a: any): a is Function {
-    return typeof a === "function";
+  isPlainObject<T = Record<string, unknown>>(a: unknown): a is T {
+    return typeof a === "object" && a !== null && Object.getPrototypeOf(a) === Object.prototype;
   },
   isLikelyHttpURL(s: string): boolean {
     const p = s.slice(0, 8).toLowerCase();
@@ -51,13 +38,9 @@ export default {
     }
     return newUrl;
   },
-  parseCookie(req: Request): Map<string, string> {
-    const cookie: Map<string, string> = new Map();
-    req.headers.get("cookie")?.split(";").forEach((part) => {
-      const [key, value] = this.splitBy(part.trim(), "=");
-      cookie.set(key, value);
-    });
-    return cookie;
+  toHex(buffer: ArrayBuffer) {
+    const bytes = new Uint8Array(buffer);
+    return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
   },
   prettyBytes(bytes: number) {
     const units = ["B", "KB", "MB", "GB", "TB", "PB", "EB"];
@@ -81,16 +64,24 @@ export default {
   cleanPath(path: string): string {
     return "/" + this.splitPath(path).join("/");
   },
-  debounce<T extends Function>(callback: T, delay: number): T {
-    let timer: number | null = null;
-    return ((...args: any[]) => {
+  debounce<Args extends unknown[], F extends (...args: Args) => void>(
+    fn: F,
+    delay: number,
+  ): DebouncedFunction<Args, F> {
+    let timer: number | null;
+    function debounced(this: ThisParameterType<F>, ...args: Parameters<F>): void {
       if (timer !== null) {
         clearTimeout(timer);
       }
       timer = setTimeout(() => {
         timer = null;
-        callback(...args);
+        fn(...args);
       }, delay);
-    }) as any;
+    }
+    return debounced;
   },
 };
+
+export interface DebouncedFunction<Args extends unknown[], F extends (...args: Args) => void> {
+  (this: ThisParameterType<F>, ...args: Parameters<F>): void;
+}

@@ -1,7 +1,6 @@
-import { useData } from "aleph/react";
-import "../style/index.css";
+import { Head, useData } from "aleph/react";
 
-let count = 0;
+let count = parseInt(window.localStorage?.getItem("count") || "0") || 0;
 
 export const data = {
   get: (req: Request) => {
@@ -14,6 +13,7 @@ export const data = {
     } else if (action === "decrease") {
       count--;
     }
+    window.localStorage?.setItem("count", count.toString());
     return new Response(JSON.stringify({ count }));
   },
 };
@@ -23,9 +23,9 @@ export default function Index() {
 
   return (
     <div className="page">
-      <head>
+      <Head>
         <title>Hello World - Aleph.js</title>
-      </head>
+      </Head>
       <p className="logo">
         <img src="/assets/logo.svg" height="60" title="Aleph.js" />
       </p>
@@ -49,13 +49,13 @@ export default function Index() {
         {!isLoading && <strong>{data?.count}</strong>}
         <button
           disabled={Boolean(isMutating)}
-          onClick={() => mutation.post({ action: "decrease" }, true)}
+          onClick={() => mutation.post({ action: "decrease" }, "replace")}
         >
           -
         </button>
         <button
           disabled={Boolean(isMutating)}
-          onClick={() => mutation.post({ action: "increase" }, true)}
+          onClick={() => mutation.post({ action: "increase" }, "replace")}
         >
           +
         </button>

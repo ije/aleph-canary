@@ -1,171 +1,192 @@
-import { dirname, join } from "https://deno.land/std@0.125.0/path/mod.ts";
-import { transform, transformCSS } from "../compiler/mod.ts";
-import { restoreUrl, toLocalPath } from "../lib/path.ts";
+import { createGenerator } from "https://esm.sh/@unocss/core@0.25.0";
+import { fastTransform, transform, transformCSS } from "../compiler/mod.ts";
+import type { ImportMap, TransformOptions } from "../compiler/types.d.ts";
+import { readCode } from "../lib/fs.ts";
+import { builtinModuleExts, restoreUrl, toLocalPath } from "../lib/path.ts";
 import { Loader, serveDir } from "../lib/serve.ts";
 import util from "../lib/util.ts";
-import { getAlephPkgUri, loadDenoJSXConfig, loadImportMap } from "./config.ts";
-import { DependencyGraph } from "./graph.ts";
-import type { AlephJSXConfig } from "../types.d.ts";
-
-export const clientDependencyGraph = new DependencyGraph();
-export const serverDependencyGraph = new DependencyGraph();
+import type { AlephConfig, AtomicCSSConfig, JSXConfig } from "../types.d.ts";
+import { bundleCSS } from "./bundle.ts";
+import { getAlephPkgUri } from "./config.ts";
+import { isRouteFile } from "./routing.ts";
+import type { DependencyGraph } from "./graph.ts";
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
 const cssModuleLoader: Loader = {
-  test: (url) => url.split("?").shift()!.endsWith(".css"),
-  load: async (url, rawContent) => {
-    const { pathname } = new URL(url);
-    const specifier = "." + util.trimPrefix(pathname, Deno.cwd());
-    const js = await bundleCSS(specifier, dec.decode(rawContent), {
-      minify: Deno.env.get("ALEPH_ENV") !== "development",
-      cssModules: pathname.endsWith(".module.css"),
-      toJS: true,
-    });
+  test: (url) => url.pathname.endsWith(".css"),
+  load: async ({ pathname }, rawContent) => {
+    const cssExports: Record<string, string> = {};
+    if (pathname.endsWith(".module.css")) {
+      const specifier = "." + pathname;
+      const { exports } = await transformCSS(specifier, dec.decode(rawContent), {
+        analyzeDependencies: false,
+        cssModules: true,
+        drafts: {
+          nesting: true,
+          customMedia: true,
+        },
+      });
+      if (exports) {
+        for (const [key, value] of Object.entries(exports)) {
+          cssExports[key] = value.name;
+        }
+      }
+    }
     return {
-      content: enc.encode(js),
+      content: enc.encode(`export default ${JSON.stringify(cssExports)};`),
       contentType: "application/javascript; charset=utf-8",
     };
   },
 };
 
-export async function serveAppModules(port: number) {
-  Deno.env.set("ALEPH_APP_MODULES_PORT", port.toString());
-  await serveDir({ cwd: "/", port, loaders: [cssModuleLoader] });
+const esModuleLoader: Loader<{ importMap: ImportMap; initialGraphVersion: string }> = {
+  test: (url) => builtinModuleExts.findIndex((ext) => url.pathname.endsWith(`.${ext}`)) !== -1,
+  load: async ({ pathname }, rawContent, options) => {
+    const config: AlephConfig | undefined = Reflect.get(globalThis, "__ALEPH_CONFIG");
+    const specifier = "." + pathname;
+    const isJSX = pathname.endsWith(".jsx") || pathname.endsWith(".tsx");
+    const serverDependencyGraph: DependencyGraph | undefined = Reflect.get(globalThis, "__ALEPH_serverDependencyGraph");
+    if (serverDependencyGraph) {
+      const graphVersions = serverDependencyGraph.modules.filter((mod) =>
+        !util.isLikelyHttpURL(specifier) && !util.isLikelyHttpURL(mod.specifier) && mod.specifier !== specifier
+      ).reduce((acc, { specifier, version }) => {
+        acc[specifier] = version.toString(16);
+        return acc;
+      }, {} as Record<string, string>);
+      const useAtomicCSS = Boolean(config?.atomicCSS?.presets?.length) && isJSX;
+      const { code, deps, jsxStaticClasses } = await fastTransform(specifier, dec.decode(rawContent), {
+        parseJsxStaticClasses: useAtomicCSS,
+        importMap: options?.importMap,
+        initialGraphVersion: options?.initialGraphVersion,
+        graphVersions,
+      });
+      serverDependencyGraph.mark(specifier, {
+        deps,
+        inlineCSS: useAtomicCSS && Boolean(jsxStaticClasses?.length),
+        jsxStaticClasses,
+      });
+      return {
+        content: enc.encode(code),
+      };
+    }
+    return {
+      content: rawContent,
+    };
+  },
+};
+
+/** serve app modules to support module loader that allows you import NON-JS modules like `.css/.vue/.svelet`... */
+export async function serveAppModules(port: number, importMap: ImportMap) {
+  try {
+    Deno.env.set("ALEPH_APP_MODULES_PORT", port.toString());
+    await serveDir({
+      port,
+      loaders: [esModuleLoader, cssModuleLoader],
+      loaderOptions: { importMap, initialGraphVersion: Date.now().toString(16) },
+    });
+  } catch (error) {
+    if (error instanceof Deno.errors.AddrInUse) {
+      await serveAppModules(port + 1, importMap);
+    } else {
+      throw error;
+    }
+  }
 }
 
-type Options = {
+export type TransformerOptions = {
   isDev: boolean;
-  jsxMagic: boolean;
-  mtime?: Date;
+  buildTarget: TransformOptions["target"];
+  buildArgsHash: string;
+  jsxConfig: JSXConfig;
+  importMap: ImportMap;
+  atomicCSS?: AtomicCSSConfig;
 };
 
-export const fetchClientModule = async (pathname: string, { isDev, jsxMagic, mtime }: Options): Promise<Response> => {
-  const [specifier, rawCode] = await readCode(pathname.startsWith("/-/") ? restoreUrl(pathname) : `.${pathname}`);
-  let js: string;
-  if (pathname.endsWith(".css")) {
-    js = await bundleCSS(specifier, rawCode, {
-      minify: !isDev,
-      cssModules: pathname.endsWith(".module.css"),
-      toJS: true,
-      resolveAlephPkgUri: true,
-      hmr: isDev,
-    });
-  } else {
-    const importMap = await loadImportMap();
-    const jsxConfig: AlephJSXConfig = { jsxMagic, ...(await loadDenoJSXConfig()) };
-    const graphVersions = clientDependencyGraph.modules.filter((mod) =>
-      !util.isLikelyHttpURL(specifier) && !util.isLikelyHttpURL(mod.specifier) && mod.specifier !== specifier
-    ).reduce((acc, { specifier, version }) => {
-      acc[specifier] = version;
-      return acc;
-    }, {} as Record<string, number>);
-    const ret = await transform(specifier, rawCode, {
-      ...jsxConfig,
-      alephPkgUri: getAlephPkgUri(),
-      graphVersions,
-      importMap,
-      isDev,
-    });
-    clientDependencyGraph.mark({
-      specifier,
-      version: mtime?.getTime() || 0,
-      deps: ret.deps || [],
-    });
-    js = ret.code;
-  }
-  const headers = new Headers({ "Content-Type": "application/javascript; charset=utf-8" });
-  if (mtime) {
-    headers.set("Last-Modified", mtime.toUTCString());
-  }
-  headers.set("Cache-Control", "public, max-age=0, must-revalidate");
-  return new Response(js, { headers });
-};
+export const clientModuleTransformer = {
+  fetch: async (req: Request, options: TransformerOptions): Promise<Response> => {
+    const clientDependencyGraph: DependencyGraph | undefined = Reflect.get(globalThis, "__ALEPH_clientDependencyGraph");
+    if (!clientDependencyGraph) {
+      return new Response("Server is not ready", { status: 500 });
+    }
 
-type BundleCssOptions = {
-  cssModules?: boolean;
-  minify?: boolean;
-  toJS?: boolean;
-  resolveAlephPkgUri?: boolean;
-  hmr?: boolean;
-};
+    const { isDev, buildArgsHash } = options;
+    const { pathname, searchParams, search } = new URL(req.url);
+    const specifier = pathname.startsWith("/-/") ? restoreUrl(pathname + search) : `.${pathname}`;
+    const isJSX = pathname.endsWith(".jsx") || pathname.endsWith(".tsx");
+    const isCSS = pathname.endsWith(".css");
+    const [rawCode, mtime] = await readCode(specifier);
+    const etag = mtime
+      ? `${mtime.toString(16)}-${rawCode.length.toString(16)}-${
+        rawCode.charCodeAt(Math.floor(rawCode.length / 2)).toString(16)
+      }${buildArgsHash.slice(0, 8)}`
+      : util.toHex(await crypto.subtle.digest("sha-1", enc.encode(rawCode + buildArgsHash)));
+    if (req.headers.get("If-None-Match") === etag) {
+      return new Response(null, { status: 304 });
+    }
 
-export async function bundleCSS(
-  specifier: string,
-  rawCode: string,
-  options: BundleCssOptions,
-  tracing = new Set<string>(),
-): Promise<string> {
-  const eof = options.minify ? "" : "\n";
-  let { code: css, dependencies, exports } = await transformCSS(specifier, rawCode, {
-    ...options,
-    analyzeDependencies: true,
-    drafts: {
-      nesting: true,
-      customMedia: true,
-    },
-  });
-  if (dependencies && dependencies.length > 0) {
-    const imports = await Promise.all(
-      dependencies.filter((dep) => dep.type === "import").map(async (dep) => {
-        let url = dep.url;
-        if (util.isLikelyHttpURL(specifier)) {
-          if (!util.isLikelyHttpURL(url)) {
-            url = new URL(url, specifier).toString();
-          }
-        } else {
-          url = join(dirname(specifier), url);
-        }
-        if (tracing.has(url)) {
-          return "";
-        }
-        tracing.add(url);
-        const [s, css] = await readCode(url);
-        return await bundleCSS(s, css, { minify: options.minify }, tracing);
-      }),
-    );
-    css = imports.join(eof) + eof + css;
-  }
-  if (options.toJS) {
-    const alephPkgUri = getAlephPkgUri();
-    const cssModulesExports: Record<string, string> = {};
-    if (exports) {
-      for (const [key, value] of Object.entries(exports)) {
-        cssModulesExports[key] = value.name;
+    let resBody = "";
+    let resType = "application/javascript";
+
+    if (isCSS) {
+      const toJS = searchParams.has("module");
+      const { code, deps } = await bundleCSS(specifier, rawCode, {
+        minify: !isDev,
+        cssModules: toJS && pathname.endsWith(".module.css"),
+        resolveAlephPkgUri: true,
+        hmr: isDev,
+        toJS,
+      });
+      resBody = code;
+      if (!toJS) {
+        resType = "text/css";
+      }
+      clientDependencyGraph.mark(specifier, { deps: deps?.map((specifier) => ({ specifier })) });
+    } else {
+      const { atomicCSS, jsxConfig, importMap, buildTarget } = options;
+      const graphVersions = clientDependencyGraph.modules.filter((mod) =>
+        !util.isLikelyHttpURL(specifier) && !util.isLikelyHttpURL(mod.specifier) && mod.specifier !== specifier
+      ).reduce((acc, { specifier, version }) => {
+        acc[specifier] = version.toString(16);
+        return acc;
+      }, {} as Record<string, string>);
+      const useAtomicCSS = Boolean(atomicCSS?.presets?.length) && isJSX;
+      const alephPkgUri = getAlephPkgUri();
+      const { code, jsxStaticClasses, deps } = await transform(specifier, rawCode, {
+        ...jsxConfig,
+        stripDataExport: isRouteFile(specifier),
+        parseJsxStaticClasses: useAtomicCSS,
+        target: buildTarget,
+        alephPkgUri,
+        graphVersions,
+        importMap,
+        isDev,
+      });
+      const atomicStyle = new Set(jsxStaticClasses?.map((name) => name.split(" ").map((name) => name.trim())).flat());
+      let inlineCSS: string | null = null;
+      if (useAtomicCSS && atomicStyle.size > 0) {
+        const uno = createGenerator(atomicCSS);
+        const { css } = await uno.generate(atomicStyle, { id: specifier, minify: !isDev });
+        inlineCSS = css;
+      }
+      if (inlineCSS) {
+        resBody = code +
+          `\nimport { applyCSS as __ALEPH_applyCSS } from "${
+            toLocalPath(alephPkgUri)
+          }framework/core/style.ts";__ALEPH_applyCSS(${JSON.stringify(specifier)}, ${JSON.stringify(inlineCSS)});`;
+        clientDependencyGraph.mark(specifier, { deps, inlineCSS: true });
+      } else {
+        resBody = code;
+        clientDependencyGraph.mark(specifier, { deps });
       }
     }
-    return [
-      options.hmr && `import createHotContext from "${toLocalPath(alephPkgUri)}framework/core/hmr.ts";`,
-      options.hmr && `import.meta.hot = createHotContext(${JSON.stringify(specifier)});`,
-      `import { applyCSS } from "${
-        options.resolveAlephPkgUri ? toLocalPath(alephPkgUri).slice(0, -1) : alephPkgUri
-      }/framework/core/style.ts";`,
-      `export const css = ${JSON.stringify(css)};`,
-      `export default ${JSON.stringify(cssModulesExports)};`,
-      `applyCSS(${JSON.stringify(specifier)}, { css });`,
-      options.hmr && `import.meta.hot.accept();`,
-    ].filter(Boolean).join(eof);
-  }
-  return css;
-}
-
-async function readCode(filename: string): Promise<[string, string]> {
-  if (util.isLikelyHttpURL(filename)) {
-    const res = await fetch(filename);
-    if (res.status >= 400) {
-      throw new Error(`fetch ${filename}: ${res.status} - ${res.statusText}`);
-    }
-    return [filename, await res.text()];
-  }
-  let specifier = filename;
-  if (filename.startsWith("/")) {
-    const cwd = Deno.cwd();
-    if (filename.startsWith(cwd)) {
-      specifier = `.${util.trimPrefix(filename, cwd)}`;
-    }
-  } else {
-    specifier = `./${util.trimPrefix(filename, "./")}`;
-  }
-  return [specifier, await Deno.readTextFile(filename)];
-}
+    return new Response(resBody, {
+      headers: {
+        "Content-Type": `${resType}; charset=utf-8`,
+        "Cache-Control": "public, max-age=0, must-revalidate",
+        "Etag": etag,
+      },
+    });
+  },
+};

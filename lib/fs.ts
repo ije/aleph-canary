@@ -1,4 +1,6 @@
 import { join } from "https://deno.land/std@0.125.0/path/mod.ts";
+import cache from "./cache.ts";
+import util from "./util.ts";
 
 /* check whether or not the given path exists as a directory. */
 export async function existsDir(path: string): Promise<boolean> {
@@ -37,7 +39,47 @@ export async function findFile(dir: string, filenames: string[]): Promise<string
   return void 0;
 }
 
-export const watchFs = async (dir: string, listener: (path: string, kind: "create" | "remove" | "modify") => void) => {
+// get files in the directory
+export async function getFiles(
+  dir: string,
+  filter?: (filename: string) => boolean,
+  __path: string[] = [],
+): Promise<string[]> {
+  const list: string[] = [];
+  for await (const dirEntry of Deno.readDir(dir)) {
+    if (dirEntry.isDirectory) {
+      list.push(...await getFiles(join(dir, dirEntry.name), filter, [...__path, dirEntry.name]));
+    } else {
+      const filename = [".", ...__path, dirEntry.name].join("/");
+      if (!filter || filter(filename)) {
+        list.push(filename);
+      }
+    }
+  }
+  return list;
+}
+
+/* read source code from fs/cdn/cache */
+export async function readCode(specifier: string): Promise<[string, number | undefined]> {
+  if (util.isLikelyHttpURL(specifier)) {
+    const url = new URL(specifier);
+    if (url.hostname === "esm.sh") {
+      url.searchParams.set("target", "esnext");
+    }
+    const res = await cache(url.toString());
+    if (res.status >= 400) {
+      throw new Error(`fetch ${url} ${specifier}: ${res.status} - ${res.statusText}`);
+    }
+    const val = res.headers.get("Last-Modified");
+    const mtime = val ? new Date(val).getTime() : undefined;
+    return [await res.text(), mtime];
+  }
+  const stat = await Deno.stat(specifier);
+  return [await Deno.readTextFile(specifier), stat.mtime?.getTime()];
+}
+
+/* watch the given directory and its subdirectories */
+export const watchFs = async (dir: string, listener: (kind: "create" | "remove" | "modify", path: string) => void) => {
   const timers = new Map();
   const debounce = (id: string, callback: () => void, delay: number) => {
     if (timers.has(id)) {
@@ -52,15 +94,29 @@ export const watchFs = async (dir: string, listener: (path: string, kind: "creat
     );
   };
   const w = Deno.watchFs(dir, { recursive: true });
+  const ignoreReg = /[\/\\](\.git(hub)?|vendor|node_modules|dist|output)[\/\\]/;
+  const ignore = (path: string) => ignoreReg.test(path) || path.endsWith(".DS_Store");
+  const allFiles = new Set<string>(
+    (await getFiles(dir)).map((name) => join(dir, name)).filter((path) => !ignore(path)),
+  );
   for await (const { kind, paths } of w) {
     for (const path of paths) {
+      if (ignore(path)) {
+        continue;
+      }
       debounce(kind + path, async () => {
         try {
           await Deno.lstat(path);
-          listener(path, kind === "create" ? "create" : "modify");
+          if (!allFiles.has(path)) {
+            allFiles.add(path);
+            listener("create", path);
+          } else {
+            listener("modify", path);
+          }
         } catch (error) {
           if (error instanceof Deno.errors.NotFound) {
-            listener(path, "remove");
+            allFiles.delete(path);
+            listener("remove", path);
           } else {
             console.warn("watchFs:", error);
           }

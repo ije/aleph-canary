@@ -1,8 +1,9 @@
-import { resolve } from "https://deno.land/std@0.125.0/path/mod.ts";
+import { basename, resolve } from "https://deno.land/std@0.125.0/path/mod.ts";
 import { serve as stdServe, serveTls } from "https://deno.land/std@0.125.0/http/server.ts";
 import { getFlag, parse, parsePortNumber } from "../lib/flags.ts";
 import { existsDir, findFile } from "../lib/fs.ts";
 import log from "../lib/log.ts";
+import { loadImportMap } from "../server/config.ts";
 import { serve } from "../server/mod.ts";
 import { serveAppModules } from "../server/transformer.ts";
 
@@ -43,24 +44,25 @@ if (import.meta.main) {
     log.fatal("missing `--tls-key` option");
   }
 
-  serveAppModules(6060);
+  serveAppModules(6060, await loadImportMap());
   log.debug(`Serve app modules on http://localhost:${Deno.env.get("ALEPH_APP_MODULES_PORT")}`);
 
   const serverEntry = await findFile(Deno.cwd(), ["server.tsx", "server.jsx", "server.ts", "server.js"]);
   if (serverEntry) {
-    const serverVersion = (await Deno.lstat(serverEntry)).mtime?.getTime().toString(16);
-    await import(`http://localhost:${Deno.env.get("ALEPH_APP_MODULES_PORT")}${serverEntry}?v=${serverVersion}`);
+    await import(
+      `http://localhost:${Deno.env.get("ALEPH_APP_MODULES_PORT")}/${basename(serverEntry)}?t=${Date.now().toString(16)}`
+    );
   }
 
-  const global = globalThis as any;
-  if (global.__ALEPH_SERVER_HANDLER === undefined) {
-    serve(); // make default handler
+  // make the default handler
+  if (!Reflect.has(globalThis, "__ALEPH_SERVER_HANDLER")) {
+    serve();
   }
 
   const handler = (req: Request) => {
-    const serverHandler = global.__ALEPH_SERVER_HANDLER;
-    return serverHandler(req);
+    return Reflect.get(globalThis, "__ALEPH_SERVER_HANDLER")?.(req);
   };
+
   log.info(`Server ready on http://localhost:${port}`);
   if (certFile && keyFile) {
     await serveTls(handler, { port, hostname, certFile, keyFile });

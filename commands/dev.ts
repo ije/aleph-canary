@@ -1,12 +1,17 @@
-import { relative, resolve } from "https://deno.land/std@0.125.0/path/mod.ts";
+import { basename, relative, resolve } from "https://deno.land/std@0.125.0/path/mod.ts";
 import { serve as stdServe, serveTls } from "https://deno.land/std@0.125.0/http/server.ts";
-import { EventEmitter } from "../framework/core/events.ts";
-import { existsDir, findFile, watchFs } from "../lib/fs.ts";
+import mitt, { Emitter } from "https://esm.sh/mitt@3.0.0";
 import { getFlag, parse, parsePortNumber } from "../lib/flags.ts";
+import { existsDir, findFile, watchFs } from "../lib/fs.ts";
+import { builtinModuleExts } from "../lib/path.ts";
 import log from "../lib/log.ts";
 import util from "../lib/util.ts";
+import { loadImportMap } from "../server/config.ts";
 import { serve } from "../server/mod.ts";
-import { clientDependencyGraph, serveAppModules, serverDependencyGraph } from "../server/transformer.ts";
+import { initRoutes, toRoutingRegExp } from "../server/routing.ts";
+import { type DependencyGraph } from "../server/graph.ts";
+import { serveAppModules } from "../server/transformer.ts";
+import { AlephConfig } from "../types.d.ts";
 
 export const helpMessage = `
 Usage:
@@ -25,6 +30,21 @@ Options:
     -h, --help                   Prints help message
 `;
 
+type FsEvents = {
+  [key in "create" | "remove" | `modify:${string}` | `hotUpdate:${string}`]: { specifier: string };
+};
+
+const fswListeners = new Set<Emitter<FsEvents>>();
+const createFSWListener = () => {
+  const e = mitt<FsEvents>();
+  fswListeners.add(e);
+  return e;
+};
+const removeFSWListener = (e: Emitter<FsEvents>) => {
+  e.all.clear();
+  fswListeners.delete(e);
+};
+
 if (import.meta.main) {
   const { args, options } = parse();
 
@@ -34,6 +54,7 @@ if (import.meta.main) {
     log.fatal("No such directory:", workingDir);
   }
   Deno.chdir(workingDir);
+  Deno.env.set("ALEPH_ENV", "development");
 
   const port = parsePortNumber(getFlag(options, ["p", "port"], "8080"));
   const hostname = getFlag(options, ["hostname"]);
@@ -45,93 +66,101 @@ if (import.meta.main) {
     log.fatal("missing `--tls-key` option");
   }
 
-  Deno.env.set("ALEPH_ENV", "development");
-
-  serveAppModules(6060);
+  serveAppModules(6060, await loadImportMap());
   log.debug(`Serve app modules on http://localhost:${Deno.env.get("ALEPH_APP_MODULES_PORT")}`);
 
-  /** create a fs watcher.  */
-  const fsWatchListeners: EventEmitter[] = [];
-  const createFSWatchListener = (): EventEmitter => {
-    const e = new EventEmitter();
-    fsWatchListeners.push(e);
-    return e;
-  };
-  const removeFSWatchListener = (e: EventEmitter) => {
-    e.removeAllListeners();
-    const index = fsWatchListeners.indexOf(e);
-    if (index > -1) {
-      fsWatchListeners.splice(index, 1);
-    }
-  };
-  watchFs(workingDir, (path, kind) => {
+  log.info(`Watching files for changes...`);
+  watchFs(workingDir, (kind, path) => {
     const specifier = "./" + relative(workingDir, path);
+    const clientDependencyGraph: DependencyGraph | undefined = Reflect.get(globalThis, "__ALEPH_clientDependencyGraph");
+    const serverDependencyGraph: DependencyGraph | undefined = Reflect.get(globalThis, "__ALEPH_serverDependencyGraph");
     if (kind === "remove") {
-      clientDependencyGraph.unmark(specifier);
-      serverDependencyGraph.unmark(specifier);
+      clientDependencyGraph?.unmark(specifier);
+      serverDependencyGraph?.unmark(specifier);
     } else {
-      clientDependencyGraph.update(specifier);
-      serverDependencyGraph.update(specifier);
+      clientDependencyGraph?.update(specifier);
+      serverDependencyGraph?.update(specifier);
     }
     if (kind === "modify") {
-      fsWatchListeners.forEach((e) => e.emit(`modify:${specifier}`));
+      fswListeners.forEach((e) => {
+        e.emit(`modify:${specifier}`, { specifier });
+        // emit HMR event
+        if (e.all.has(`hotUpdate:${specifier}`)) {
+          e.emit(`hotUpdate:${specifier}`, { specifier });
+        } else {
+          clientDependencyGraph?.lookup(specifier, (specifier) => {
+            if (e.all.has(`hotUpdate:${specifier}`)) {
+              e.emit(`hotUpdate:${specifier}`, { specifier });
+              return false;
+            }
+          });
+        }
+      });
     } else {
-      fsWatchListeners.forEach((e) => e.emit(kind, specifier));
+      fswListeners.forEach((e) => {
+        e.emit(kind, { specifier });
+      });
     }
   });
-  log.info(`Watching files for changes...`);
 
-  const serverEntry = await findFile(Deno.cwd(), ["server.tsx", "server.jsx", "server.ts", "server.js"]);
-  if (serverEntry) {
-    const serverVersion = (await Deno.lstat(serverEntry)).mtime?.getTime().toString(16);
-    await import(`http://localhost:${Deno.env.get("ALEPH_APP_MODULES_PORT")}${serverEntry}?v=${serverVersion}`);
+  const fswListener = createFSWListener();
+  const watchServerHandler = (filename: string) => {
+    fswListener.off(`modify:./${basename(filename)}`);
+    fswListener.on(`modify:./${basename(filename)}`, importServerHandler);
+  };
+  const importServerHandler = async (): Promise<void> => {
+    const cwd = Deno.cwd();
+    const [denoConfigFile, importMapFile, serverEntry] = await Promise.all([
+      findFile(cwd, ["deno.jsonc", "deno.json", "tsconfig.json"]),
+      findFile(cwd, ["import_map", "import-map", "importmap", "importMap"].map((v) => `${v}.json`)),
+      findFile(cwd, builtinModuleExts.map((ext) => `server.${ext}`)),
+    ]);
+    if (serverEntry) {
+      watchServerHandler(serverEntry);
+      if (denoConfigFile) {
+        watchServerHandler(denoConfigFile);
+      }
+      if (importMapFile) {
+        watchServerHandler(importMapFile);
+      }
+      await import(
+        `http://localhost:${Deno.env.get("ALEPH_APP_MODULES_PORT")}/${basename(serverEntry)}?t=${
+          Date.now().toString(16)
+        }`
+      );
+      log.info(`Server handler imported from ${basename(serverEntry)}`);
+    }
+  };
+  await importServerHandler();
+
+  // init routes when fs change
+  const updateRoutes = ({ specifier }: { specifier: string }) => {
+    const config: AlephConfig | undefined = Reflect.get(globalThis, "__ALEPH_CONFIG");
+    if (config && config.routeFiles) {
+      const reg = toRoutingRegExp(config.routeFiles);
+      if (reg.test(specifier)) {
+        initRoutes(reg);
+      }
+    }
+  };
+  fswListener.on("create", updateRoutes);
+  fswListener.on("remove", updateRoutes);
+
+  // make the default handler
+  if (!Reflect.has(globalThis, "__ALEPH_SERVER_HANDLER")) {
+    serve();
   }
 
-  const global = globalThis as any;
-  if (global.__ALEPH_SERVER_HANDLER === undefined) {
-    serve(); // make default handler
-  }
-
+  // final server handler
   const handler = (req: Request) => {
     const { pathname } = new URL(req.url);
 
-    // handle HMR socket
+    // handle HMR sockets
     if (pathname === "/-/HMR") {
-      const { socket, response } = Deno.upgradeWebSocket(req, {});
-      const listener = createFSWatchListener();
-      const send = (message: object) => {
-        try {
-          socket.send(JSON.stringify(message));
-        } catch (err) {
-          log.warn("socket.send:", err.message);
-        }
-      };
-      socket.addEventListener("open", () => {
-        listener.on("add", (specifier: string) => send({ type: "add", specifier }));
-        listener.on("remove", (specifier: string) => {
-          listener.removeAllListeners(`modify:${specifier}`);
-          send({ type: "remove", specifier });
-        });
-        log.debug("hmr connected");
-      });
-      socket.addEventListener("message", (e) => {
-        if (util.isFilledString(e.data)) {
-          try {
-            const { type, specifier } = JSON.parse(e.data);
-            if (type === "hotAccept" && util.isFilledString(specifier)) {
-              listener.on(`modify:${specifier}`, () => send({ type: "modify", specifier }));
-            }
-          } catch (e) {}
-        }
-      });
-      socket.addEventListener("close", () => {
-        removeFSWatchListener(listener);
-        log.debug("hmr closed");
-      });
-      return response;
+      return handleHMRSocket(req);
     }
 
-    return global.__ALEPH_SERVER_HANDLER(req);
+    return Reflect.get(globalThis, "__ALEPH_SERVER_HANDLER")?.(req);
   };
 
   log.info(`Server ready on http://localhost:${port}`);
@@ -140,4 +169,50 @@ if (import.meta.main) {
   } else {
     await stdServe(handler, { port, hostname });
   }
+}
+
+function handleHMRSocket(req: Request): Response {
+  const { socket, response } = Deno.upgradeWebSocket(req, {});
+  const listener = createFSWListener();
+  const send = (message: Record<string, unknown>) => {
+    try {
+      socket.send(JSON.stringify(message));
+    } catch (err) {
+      log.warn("socket.send:", err.message);
+    }
+  };
+  socket.addEventListener("open", () => {
+    listener.on("create", ({ specifier }) => {
+      const config: AlephConfig | undefined = Reflect.get(globalThis, "__ALEPH_CONFIG");
+      if (config && config.routeFiles) {
+        const reg = toRoutingRegExp(config.routeFiles);
+        const pattern = reg.exec(specifier);
+        if (pattern) {
+          send({ type: "create", specifier, routePattern: pattern });
+          return;
+        }
+      }
+      send({ type: "create", specifier });
+    });
+    listener.on("remove", ({ specifier }) => {
+      listener.off(`hotUpdate:${specifier}`);
+      send({ type: "remove", specifier });
+    });
+  });
+  socket.addEventListener("message", (e) => {
+    if (util.isFilledString(e.data)) {
+      try {
+        const { type, specifier } = JSON.parse(e.data);
+        if (type === "hotAccept" && util.isFilledString(specifier)) {
+          listener.on(`hotUpdate:${specifier}`, () => send({ type: "modify", specifier }));
+        }
+      } catch (_e) {
+        log.error("invlid socket message:", e.data);
+      }
+    }
+  });
+  socket.addEventListener("close", () => {
+    removeFSWListener(listener);
+  });
+  return response;
 }

@@ -8,18 +8,17 @@ import {
   useEffect,
   useMemo,
 } from "https://esm.sh/react@17.0.2";
-import util from "../../../lib/util.ts";
-import MainContext from "../context.ts";
-import InlineStyle from "./InlineStyle.ts";
+import util from "../../lib/util.ts";
+import MainContext from "./context.ts";
 
-const Head: FC = (props) => {
+export const Head: FC = (props) => {
   const { ssrHeadCollection } = useContext(MainContext);
   const [els, forwardNodes] = useMemo(() => parse(props.children), [
     props.children,
   ]);
 
   if (ssrHeadCollection) {
-    els.forEach(({ type, props }, key) => {
+    els.forEach(({ type, props }) => {
       const { children, ...rest } = props;
       if (type === "title") {
         if (util.isFilledString(children)) {
@@ -77,8 +76,8 @@ const Head: FC = (props) => {
 
 function parse(
   node: ReactNode,
-): [{ type: string; props: Record<string, any> }[], ReactNode[]] {
-  const els: { type: string; props: Record<string, any> }[] = [];
+): [{ type: string; props: Record<string, unknown> }[], ReactNode[]] {
+  const els: { type: string; props: Record<string, unknown> }[] = [];
   const forwardNodes: ReactNode[] = [];
   const parseFn = (node: ReactNode) => {
     Children.forEach(node, (child) => {
@@ -86,15 +85,15 @@ function parse(
         return;
       }
 
-      let { type, props } = child;
+      const { type, props } = child;
       switch (type) {
         case Fragment:
           parseFn(props.children);
           break;
 
-        case InlineStyle:
-          forwardNodes.push(createElement(InlineStyle, props));
-          break;
+        // case InlineStyle:
+        //   forwardNodes.push(createElement(InlineStyle, props));
+        //   break;
 
         // ingore `script` and `no-script` tag
 
@@ -105,7 +104,7 @@ function parse(
         case "style":
           // remove the children prop of base/meta/link
           if (["base", "meta", "link"].includes(type) && "children" in props) {
-            const { children, ...rest } = props;
+            const { children: _, ...rest } = props;
             els.push({ type, props: rest });
           } else {
             els.push({ type, props });
@@ -118,5 +117,3 @@ function parse(
   parseFn(node);
   return [els, forwardNodes];
 }
-
-export default Head;

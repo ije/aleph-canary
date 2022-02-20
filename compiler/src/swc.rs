@@ -1,6 +1,6 @@
 use crate::error::{DiagnosticBuffer, ErrorBuffer};
 use crate::hmr::hmr;
-use crate::jsx_magic::jsx_magic_fold;
+use crate::jsx_attr::jsx_attr_fold;
 use crate::resolve_fold::resolve_fold;
 use crate::resolver::Resolver;
 use crate::source_type::SourceType;
@@ -20,19 +20,21 @@ use swc_ecmascript::visit::{Fold, FoldWith};
 /// Options for transpiling a module.
 #[derive(Debug, Clone)]
 pub struct EmitOptions {
-  pub jsx_magic: bool,
-  pub jsx_import_source: String,
+  pub jsx_import_source: Option<String>,
+  pub parse_jsx_static_classes: bool,
+  pub strip_data_export: bool,
   pub minify: bool,
-  pub is_dev: bool,
+  pub source_map: bool,
 }
 
 impl Default for EmitOptions {
   fn default() -> Self {
     EmitOptions {
-      jsx_magic: false,
-      jsx_import_source: "".into(),
+      jsx_import_source: None,
+      parse_jsx_static_classes: false,
+      strip_data_export: false,
       minify: false,
-      is_dev: false,
+      source_map: false,
     }
   }
 }
@@ -85,6 +87,30 @@ impl SWC {
     })
   }
 
+  /// fast transform
+  pub fn fast_transform(
+    self,
+    resolver: Rc<RefCell<Resolver>>,
+    options: &EmitOptions,
+  ) -> Result<(String, Option<String>), anyhow::Error> {
+    swc_common::GLOBALS.set(&Globals::new(), || {
+      let is_jsx = match self.source_type {
+        SourceType::JSX => true,
+        SourceType::TSX => true,
+        _ => false,
+      };
+      let passes = chain!(
+        Optional::new(
+          jsx_attr_fold(resolver.clone()),
+          is_jsx && options.parse_jsx_static_classes
+        ),
+        resolve_fold(resolver.clone(), false),
+      );
+
+      Ok(self.apply_fold(passes, true, false).unwrap())
+    })
+  }
+
   /// transform a JS/TS/JSX/TSX file into a JS file, based on the supplied options.
   pub fn transform(
     self,
@@ -95,15 +121,16 @@ impl SWC {
       let top_level_mark = Mark::fresh(Mark::root());
       let jsx_runtime = resolver.borrow().jsx_runtime.clone();
       let specifier_is_remote = resolver.borrow().specifier_is_remote;
+      let is_dev = resolver.borrow().is_dev;
       let is_jsx = match self.source_type {
         SourceType::JSX => true,
         SourceType::TSX => true,
         _ => false,
       };
-      let react_options = if !options.jsx_import_source.is_empty() {
+      let react_options = if let Some(jsx_import_source) = &options.jsx_import_source {
         react::Options {
           runtime: Some(react::Runtime::Automatic),
-          import_source: options.jsx_import_source.clone(),
+          import_source: jsx_import_source.clone(),
           ..Default::default()
         }
       } else {
@@ -118,12 +145,12 @@ impl SWC {
       };
       let passes = chain!(
         resolver_with_mark(top_level_mark),
-        Optional::new(react::jsx_src(options.is_dev, self.source_map.clone()), is_jsx),
+        Optional::new(react::jsx_src(is_dev, self.source_map.clone()), is_jsx),
         Optional::new(
-          jsx_magic_fold(resolver.clone(), self.source_map.clone()),
-          is_jsx && options.jsx_magic
+          jsx_attr_fold(resolver.clone()),
+          is_jsx && options.parse_jsx_static_classes
         ),
-        resolve_fold(resolver.clone()),
+        resolve_fold(resolver.clone(), options.strip_data_export),
         decorators::decorators(decorators::Config {
           legacy: true,
           emit_metadata: false
@@ -144,7 +171,7 @@ impl SWC {
         ),
         Optional::new(
           react::refresh(
-            options.is_dev,
+            is_dev,
             Some(react::RefreshOptions {
               refresh_reg: "$RefreshReg$".into(),
               refresh_sig: "$RefreshSig$".into(),
@@ -161,19 +188,19 @@ impl SWC {
             Some(&self.comments),
             react::Options {
               use_builtins: true,
-              development: options.is_dev,
+              development: is_dev,
               ..react_options
             },
             top_level_mark
           ),
           is_jsx
         ),
-        Optional::new(hmr(resolver.clone()), options.is_dev && !specifier_is_remote),
+        Optional::new(hmr(resolver.clone()), is_dev && !specifier_is_remote),
         fixer(Some(&self.comments)),
         hygiene()
       );
 
-      Ok(self.apply_fold(passes, options.is_dev, options.minify).unwrap())
+      Ok(self.apply_fold(passes, options.source_map, options.minify).unwrap())
     })
   }
 

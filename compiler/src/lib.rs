@@ -6,7 +6,7 @@ mod error;
 mod expr_utils;
 mod hmr;
 mod import_map;
-mod jsx_magic;
+mod jsx_attr;
 mod resolve_fold;
 mod resolver;
 mod source_type;
@@ -37,7 +37,10 @@ pub struct Options {
   pub import_map: ImportHashMap,
 
   #[serde(default)]
-  pub graph_versions: HashMap<String, i64>,
+  pub graph_versions: HashMap<String, String>,
+
+  #[serde(default)]
+  pub initial_graph_version: Option<String>,
 
   #[serde(default = "default_target")]
   pub target: String,
@@ -46,20 +49,23 @@ pub struct Options {
   pub jsx_runtime: String,
 
   #[serde(default)]
-  pub jsx_runtime_version: String,
+  pub jsx_runtime_version: Option<String>,
 
   #[serde(default)]
-  pub jsx_runtime_cdn_version: String,
+  pub jsx_runtime_cdn_version: Option<String>,
 
   #[serde(default)]
-  pub jsx_import_source: String,
+  pub jsx_import_source: Option<String>,
 
   #[serde(default)]
-  pub jsx_magic: bool,
+  pub parse_jsx_static_classes: bool,
+
+  #[serde(default)]
+  pub strip_data_export: bool,
 }
 
 fn default_target() -> String {
-  return "es2015".into();
+  return "es2022".into();
 }
 
 fn default_jsx_runtime() -> String {
@@ -75,10 +81,55 @@ pub struct TransformOutput {
   pub deps: Vec<DependencyDescriptor>,
 
   #[serde(skip_serializing_if = "Vec::is_empty")]
-  pub jsx_static_class_names: Vec<String>,
+  pub jsx_static_classes: Vec<String>,
 
   #[serde(skip_serializing_if = "Option::is_none")]
   pub map: Option<String>,
+}
+
+#[wasm_bindgen(js_name = "fastTransform")]
+pub fn fast_transform(specifier: &str, code: &str, options: JsValue) -> Result<JsValue, JsValue> {
+  console_error_panic_hook::set_once();
+
+  let options: Options = options
+    .into_serde()
+    .map_err(|err| format!("failed to parse options: {}", err))
+    .unwrap();
+  let resolver = Rc::new(RefCell::new(Resolver::new(
+    specifier,
+    "",
+    "",
+    None,
+    None,
+    options.import_map,
+    options.graph_versions,
+    options.initial_graph_version,
+    false,
+  )));
+  let module = SWC::parse(specifier, code, EsVersion::Es2022).expect("could not parse the module");
+  let (code, map) = module
+    .fast_transform(
+      resolver.clone(),
+      &EmitOptions {
+        parse_jsx_static_classes: options.parse_jsx_static_classes,
+        strip_data_export: false,
+        jsx_import_source: None,
+        minify: false,
+        source_map: true,
+      },
+    )
+    .expect("could not transform the module");
+  let r = resolver.borrow();
+
+  Ok(
+    JsValue::from_serde(&TransformOutput {
+      code,
+      deps: r.deps.clone(),
+      jsx_static_classes: r.jsx_static_classes.clone().into_iter().collect(),
+      map,
+    })
+    .unwrap(),
+  )
 }
 
 #[wasm_bindgen(js_name = "transform")]
@@ -93,10 +144,11 @@ pub fn transform(specifier: &str, code: &str, options: JsValue) -> Result<JsValu
     specifier,
     &options.aleph_pkg_uri,
     &options.jsx_runtime,
-    &options.jsx_runtime_version,
-    &options.jsx_runtime_cdn_version,
+    options.jsx_runtime_version,
+    options.jsx_runtime_cdn_version,
     options.import_map,
     options.graph_versions,
+    options.initial_graph_version,
     options.is_dev,
   )));
   let target = match options.target.as_str() {
@@ -115,10 +167,11 @@ pub fn transform(specifier: &str, code: &str, options: JsValue) -> Result<JsValu
     .transform(
       resolver.clone(),
       &EmitOptions {
-        jsx_magic: options.jsx_magic,
+        parse_jsx_static_classes: options.parse_jsx_static_classes,
+        strip_data_export: options.strip_data_export,
         jsx_import_source: options.jsx_import_source,
         minify: !options.is_dev,
-        is_dev: options.is_dev,
+        source_map: options.is_dev,
       },
     )
     .expect("could not transform the module");
@@ -128,7 +181,7 @@ pub fn transform(specifier: &str, code: &str, options: JsValue) -> Result<JsValu
     JsValue::from_serde(&TransformOutput {
       code,
       deps: r.deps.clone(),
-      jsx_static_class_names: r.jsx_static_class_names.clone().into_iter().collect(),
+      jsx_static_classes: r.jsx_static_classes.clone().into_iter().collect(),
       map,
     })
     .unwrap(),

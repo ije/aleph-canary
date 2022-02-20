@@ -6,33 +6,35 @@ export type ImportMap = {
 export type TransformOptions = {
   alephPkgUri?: string;
   importMap?: ImportMap;
-  graphVersions?: Record<string, number>;
+  graphVersions?: Record<string, string>;
+  initialGraphVersion?: string;
   target?: "es2015" | "es2016" | "es2017" | "es2018" | "es2019" | "es2020" | "es2021" | "es2022";
   jsxRuntime?: "react" | "preact";
   jsxRuntimeVersion?: string;
   jsxRuntimeCdnVersion?: string;
   jsxImportSource?: string;
-  jsxMagic?: boolean;
+  parseJsxStaticClasses?: boolean;
+  stripDataExport?: boolean;
   isDev?: boolean;
-  inlineStylePreprocess?(key: string, type: string, tpl: string): Promise<string>;
 };
 
-export type InlineStyleExpr = {
-  readonly type: string;
-  readonly quasis: ReadonlyArray<string>;
-  readonly exprs: ReadonlyArray<string>;
-};
+export type FastTransformOptions = Pick<
+  TransformOptions,
+  | "importMap"
+  | "graphVersions"
+  | "initialGraphVersion"
+  | "parseJsxStaticClasses"
+>;
 
 export type TransformResult = {
   readonly code: string;
   readonly map?: string;
   readonly deps?: DependencyDescriptor[];
-  readonly jsxStaticClassNames?: ReadonlyArray<string>;
+  readonly jsxStaticClasses?: ReadonlyArray<string>;
 };
 
 export type DependencyDescriptor = {
   readonly specifier: string;
-  readonly isDynamic?: boolean;
   readonly isStarExport?: boolean;
 };
 
