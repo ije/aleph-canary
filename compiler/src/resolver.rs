@@ -34,7 +34,7 @@ pub struct Resolver {
   /// a ordered dependencies of the module
   pub deps: Vec<DependencyDescriptor>,
   /// jsx runtime: react | preact
-  pub jsx_runtime: String,
+  pub jsx_runtime: Option<String>,
   /// jsx static class names
   pub jsx_static_classes: IndexSet<String>,
   /// development mode
@@ -45,6 +45,7 @@ pub struct Resolver {
   import_map: ImportMap,
   graph_versions: HashMap<String, String>,
   initial_graph_version: Option<String>,
+  browser: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -59,27 +60,29 @@ impl Resolver {
   pub fn new(
     specifier: &str,
     aleph_pkg_uri: &str,
-    jsx_runtime: &str,
+    jsx_runtime: Option<String>,
     jsx_runtime_version: Option<String>,
     jsx_runtime_cdn_version: Option<String>,
     import_map: ImportHashMap,
     graph_versions: HashMap<String, String>,
     initial_graph_version: Option<String>,
     is_dev: bool,
+    browser: bool,
   ) -> Self {
     Resolver {
       aleph_pkg_uri: aleph_pkg_uri.into(),
       specifier: specifier.into(),
       specifier_is_remote: is_remote_url(specifier),
       deps: Vec::new(),
-      jsx_runtime: jsx_runtime.into(),
-      jsx_runtime_version: jsx_runtime_version,
-      jsx_runtime_cdn_version: jsx_runtime_cdn_version,
+      jsx_runtime,
+      jsx_runtime_version,
+      jsx_runtime_cdn_version,
       jsx_static_classes: IndexSet::new(),
       import_map: ImportMap::from_hashmap(import_map),
       graph_versions,
       initial_graph_version,
       is_dev,
+      browser,
     }
   }
 
@@ -227,7 +230,7 @@ impl Resolver {
     }
 
     // fix remote url to local path for development mode
-    if is_remote && (self.is_dev || nonjs) {
+    if is_remote && (self.is_dev || (nonjs && self.browser)) {
       return self.to_local_path(&import_url);
     }
 
