@@ -1,5 +1,5 @@
 /** `VERSION` managed by https://deno.land/x/publish */
-export const VERSION = "0.0.4";
+export const VERSION = "0.0.5";
 
 /** minimum supported deno version */
 export const minDenoVersion = "1.18.2";
