@@ -1,5 +1,8 @@
 /** `VERSION` managed by https://deno.land/x/publish */
-export const VERSION = "0.0.7";
+export const VERSION = "0.0.8";
+
+/** whether is canary version */
+export const isCanary = true;
 
 /** minimum supported deno version */
 export const minDenoVersion = "1.18.2";
