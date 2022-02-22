@@ -4,14 +4,14 @@ import { getContentType } from "../lib/mime.ts";
 import { builtinModuleExts } from "../lib/path.ts";
 import log from "../lib/log.ts";
 import util from "../lib/util.ts";
-import type { ServerOptions } from "../types.d.ts";
+import type { FetchContext, HTMLRewriterHandlers, ServerOptions } from "../types.d.ts";
 import { VERSION } from "../version.ts";
 import { loadImportMap, loadJSXConfig } from "./config.ts";
 import { DependencyGraph } from "./graph.ts";
 import { initRoutes } from "./routing.ts";
 import { content, json } from "./response.ts";
 import renderer from "./renderer.ts";
-import { clientModuleTransformer } from "./transformer.ts";
+import { clientModuleTransformer, serveAppModules } from "./transformer.ts";
 
 export const serve = (options: ServerOptions = {}) => {
   const { config, middlewares, fetch, ssr } = options;
@@ -80,7 +80,14 @@ export const serve = (options: ServerOptions = {}) => {
       }
     }
 
-    const ctx: Record<string, unknown> = {};
+    const customHTMLRewriter = new Map<string, HTMLRewriterHandlers>();
+    const ctx: FetchContext = {
+      HTMLRewriter: {
+        on: (selector: string, handlers: HTMLRewriterHandlers) => {
+          customHTMLRewriter.set(selector, handlers);
+        },
+      },
+    };
 
     // use middlewares
     if (Array.isArray(middlewares)) {
@@ -188,7 +195,7 @@ export const serve = (options: ServerOptions = {}) => {
       return new Response("Not Found", { status: 404 });
     }
 
-    return renderer.fetch(req, ctx, { indexHtml, routes, ssrHandler: ssr, isDev });
+    return renderer.fetch(req, ctx, { indexHtml, routes, ssrHandler: ssr, customHTMLRewriter, isDev });
   };
 
   // inject browser navigator polyfill
@@ -223,6 +230,12 @@ export const serve = (options: ServerOptions = {}) => {
       e.respondWith(handler(e.request));
     });
   } else if (!Deno.env.get("ALEPH_CLI")) {
+    if (options.ssr && options.config?.routeFiles) {
+      importMapPromise.then((importMap) => {
+        serveAppModules(6060, importMap);
+        log.debug(`Serve app modules on http://localhost:${Deno.env.get("ALEPH_APP_MODULES_PORT")}`);
+      });
+    }
     const { port = 8080, certFile, keyFile } = options;
     if (certFile && keyFile) {
       serveTls(handler, { port, certFile, keyFile });
