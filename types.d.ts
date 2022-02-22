@@ -1,9 +1,9 @@
-import type { UserConfig as AtomicCSSConfig } from "https://esm.sh/@unocss/core@0.26.0";
+import type { UserConfig as AtomicCSSConfig } from "https://esm.sh/@unocss/core@0.26.2";
 
 export type AlephConfig = {
-  routeFiles?: string | RoutesConfig;
   build?: BuildOptions;
   atomicCSS?: AtomicCSSConfig;
+  routeFiles?: string | RoutesConfig;
 };
 
 export type RoutesConfig = {
@@ -14,6 +14,11 @@ export type RoutesConfig = {
 
 export type BuildOptions = {
   target?: "es2015" | "es2016" | "es2017" | "es2018" | "es2019" | "es2020" | "es2021" | "es2022";
+  ssg?: () => SSGOptions;
+};
+
+export type SSGOptions = {
+  paths: () => Promise<string[]>;
 };
 
 export type JSXConfig = {
@@ -38,6 +43,9 @@ export type SSRContext = {
 };
 
 export type ServerOptions = {
+  port?: number;
+  certFile?: string;
+  keyFile?: string;
   config?: AlephConfig;
   middlewares?: Middleware[];
   fetch?: FetchHandler;
