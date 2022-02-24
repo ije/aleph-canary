@@ -87,7 +87,7 @@ export default {
               const imports = res.imports
                 .filter(({ defaultExport }) => defaultExport !== undefined)
                 .map(({ url, filename }, idx) =>
-                  `import mod_${idx} from ${JSON.stringify(filename)};__ssrModules[${
+                  `import mod_${idx} from ${JSON.stringify(filename.slice(1))};__ssrModules[${
                     JSON.stringify(url.pathname + url.search)
                   }]={default:mod_${idx}};`
                 );
