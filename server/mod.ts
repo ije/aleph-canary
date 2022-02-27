@@ -1,16 +1,15 @@
 import { serve as stdServe, serveTls } from "https://deno.land/std@0.125.0/http/server.ts";
 import { readableStreamFromReader } from "https://deno.land/std@0.125.0/streams/conversion.ts";
-import { getContentType } from "../lib/mime.ts";
-import { builtinModuleExts } from "../lib/path.ts";
 import log from "../lib/log.ts";
+import { getContentType } from "../lib/mime.ts";
+import { builtinModuleExts } from "../lib/helpers.ts";
 import util from "../lib/util.ts";
 import { VERSION } from "../version.ts";
 import { loadImportMap, loadJSXConfig } from "./config.ts";
-import { DependencyGraph } from "./graph.ts";
-import { initRoutes } from "./routing.ts";
+import { importRouteModule, initRoutes } from "./routing.ts";
 import { content, json } from "./response.ts";
 import renderer from "./renderer.ts";
-import { clientModuleTransformer, serveAppModules } from "./transformer.ts";
+import { clientModuleTransformer } from "./transformer.ts";
 import type { FetchContext, HTMLRewriterHandlers, Route, ServerOptions } from "./types.ts";
 
 export const serve = (options: ServerOptions = {}) => {
@@ -22,14 +21,15 @@ export const serve = (options: ServerOptions = {}) => {
   const buildArgsHashPromise = Promise.all([jsxConfigPromise, importMapPromise]).then(
     async ([jsxConfig, importMap]) => {
       const buildArgs = JSON.stringify({ config, jsxConfig, importMap, isDev, VERSION });
-      return util.toHex(await crypto.subtle.digest("sha-1", (new TextEncoder()).encode(buildArgs)));
+      return await util.computeHash("sha-1", buildArgs);
     },
   );
   const routesPromise = config?.routeFiles ? initRoutes(config.routeFiles) : Promise.resolve([]);
   const handler = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
-    const { pathname } = url;
+    const { host, pathname } = url;
 
+    // transform client modules
     if (
       pathname.startsWith("/-/") ||
       builtinModuleExts.find((ext) => pathname.endsWith(`.${ext}`)) ||
@@ -50,6 +50,7 @@ export const serve = (options: ServerOptions = {}) => {
       });
     }
 
+    // serve static files
     try {
       let filePath = `.${pathname}`;
       let stat = await Deno.lstat(filePath);
@@ -116,29 +117,19 @@ export const serve = (options: ServerOptions = {}) => {
       }
     }
 
-    // request page data
+    // request data
     const routes = (Reflect.get(globalThis, "__ALEPH_ROUTES") as Route[] | undefined) || await routesPromise;
     if (routes.length > 0) {
-      for (const [pattern, load] of routes) {
-        const ret = pattern.exec({ pathname });
+      for (const [pattern, meta] of routes) {
+        const ret = pattern.exec({ host, pathname });
         if (ret) {
           try {
-            const mod = await load();
+            const mod = await importRouteModule(meta.filename);
             const dataConfig: Record<string, unknown> = util.isPlainObject(mod.data) ? mod.data : {};
             if (req.method !== "GET" || mod.default === undefined || req.headers.has("X-Fetch-Data")) {
               const fetcher = dataConfig[req.method.toLowerCase()];
               if (typeof fetcher === "function") {
                 const request = new Request(util.appendUrlParams(url, ret.pathname.groups).toString(), req);
-                const allFetcher = dataConfig.all;
-                if (typeof allFetcher === "function") {
-                  let res = allFetcher(request);
-                  if (res instanceof Promise) {
-                    res = await res;
-                  }
-                  if (res instanceof Response) {
-                    return res;
-                  }
-                }
                 return fetcher(request, ctx);
               }
               return new Response("Method not allowed", { status: 405 });
@@ -149,7 +140,7 @@ export const serve = (options: ServerOptions = {}) => {
             }
             return new Response(
               isDev || (typeof err.status === "number" && err.status < 500)
-                ? err.message || "Server Error"
+                ? err.message || "Internal Server Error"
                 : "Internal Server Error",
               {
                 status: err.status || 500,
@@ -160,7 +151,7 @@ export const serve = (options: ServerOptions = {}) => {
       }
     }
 
-    // don't render this special asset files
+    // don't render those special asset files
     switch (pathname) {
       case "/favicon.ico":
       case "/robots.txt":
@@ -191,6 +182,7 @@ export const serve = (options: ServerOptions = {}) => {
       Reflect.set(globalThis, "__ALEPH_INDEX_HTML", indexHtml);
     }
 
+    // no root `index.html` found
     if (indexHtml === null) {
       return new Response("Not Found", { status: 404 });
     }
@@ -223,10 +215,6 @@ export const serve = (options: ServerOptions = {}) => {
     vendor: "Deno Land Inc.",
   });
 
-  if (!Reflect.has(globalThis, "clientDependencyGraph")) {
-    Reflect.set(globalThis, "clientDependencyGraph", new DependencyGraph());
-    Reflect.set(globalThis, "serverDependencyGraph", new DependencyGraph());
-  }
   Reflect.set(globalThis, "__ALEPH_CONFIG", Object.assign({}, config));
   Reflect.set(globalThis, "__ALEPH_SERVER_HANDLER", handler);
 
@@ -237,13 +225,7 @@ export const serve = (options: ServerOptions = {}) => {
       // @ts-ignore
       e.respondWith(handler(e.request));
     });
-  } else if (!Deno.env.get("ALEPH_CLI")) {
-    if (options.ssr && options.config?.routeFiles) {
-      importMapPromise.then((importMap) => {
-        serveAppModules(6060, importMap);
-        log.debug(`Serve app modules on http://localhost:${Deno.env.get("ALEPH_APP_MODULES_PORT")}`);
-      });
-    }
+  } else if (!Deno.env.get("ALEPH_APP_MODULES_PORT")) {
     const { port = 8080, certFile, keyFile } = options;
     if (certFile && keyFile) {
       serveTls(handler, { port, certFile, keyFile });

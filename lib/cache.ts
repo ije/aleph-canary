@@ -3,9 +3,7 @@ import { existsDir, existsFile } from "./fs.ts";
 import log from "./log.ts";
 import util from "./util.ts";
 
-const enc = new TextEncoder();
-
-/** download and cache remote contents */
+/** fetch and cache remote contents */
 export default async function cache(
   url: string,
   options?: { forceRefresh?: boolean; retryTimes?: number; userAgent?: string },
@@ -13,23 +11,21 @@ export default async function cache(
   const { protocol, hostname, port, pathname, search } = new URL(url);
   const isLocalhost = ["localhost", "0.0.0.0", "127.0.0.1"].includes(hostname);
   const denoDir = Deno.env.get("DENO_DIR");
-  const save = !isLocalhost && denoDir;
+  const cacheable = !isLocalhost && denoDir;
 
   let cacheDir = "";
   let hashname = "";
   let metaFilepath = "";
   let contentFilepath = "";
-  if (save) {
+  if (cacheable) {
     cacheDir = join(denoDir, "deps", util.trimSuffix(protocol, ":"), hostname + (port ? "_PORT" + port : ""));
-    hashname = util.toHex(
-      await crypto.subtle.digest("sha-256", enc.encode(pathname + search + (options?.userAgent || ""))),
-    );
+    hashname = await util.computeHash("sha-256", pathname + search + (options?.userAgent || ""));
     metaFilepath = join(cacheDir, hashname + ".metadata.json");
     contentFilepath = join(cacheDir, hashname);
   }
 
   if (
-    !options?.forceRefresh && save && await existsFile(contentFilepath) &&
+    cacheable && !options?.forceRefresh && await existsFile(contentFilepath) &&
     await existsFile(metaFilepath)
   ) {
     const [content, meta] = await Promise.all([
@@ -61,7 +57,7 @@ export default async function cache(
       continue;
     }
 
-    if (save) {
+    if (cacheable && res.ok) {
       const buffer = await res.arrayBuffer();
       const content = new Uint8Array(buffer);
       const headers: Record<string, string> = {};

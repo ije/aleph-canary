@@ -3,12 +3,12 @@ import { serve as stdServe, serveTls } from "https://deno.land/std@0.125.0/http/
 import mitt, { Emitter } from "https://esm.sh/mitt@3.0.0";
 import { getFlag, parse, parsePortNumber } from "../lib/flags.ts";
 import { existsDir, findFile, watchFs } from "../lib/fs.ts";
-import { builtinModuleExts } from "../lib/path.ts";
-import log from "../lib/log.ts";
+import { builtinModuleExts } from "../lib/helpers.ts";
+import log, { blue } from "../lib/log.ts";
 import util from "../lib/util.ts";
 import { loadImportMap } from "../server/config.ts";
 import { serve } from "../server/mod.ts";
-import { initRoutes, toRoutingRegExp } from "../server/routing.ts";
+import { initRoutes, toRouteRegExp } from "../server/routing.ts";
 import type { DependencyGraph } from "../server/graph.ts";
 import { serveAppModules } from "../server/transformer.ts";
 import type { AlephConfig } from "../server/types.ts";
@@ -53,7 +53,6 @@ if (import.meta.main) {
     log.fatal("No such directory:", workingDir);
   }
   Deno.chdir(workingDir);
-  Deno.env.set("ALEPH_CLI", "true");
   Deno.env.set("ALEPH_ENV", "development");
 
   const port = parsePortNumber(getFlag(options, ["p", "port"], "8080"));
@@ -132,7 +131,7 @@ if (import.meta.main) {
           Date.now().toString(16)
         }`
       );
-      log.info(`Server handler imported from ${basename(serverEntry)}`);
+      log.info(`Server handler imported from ${blue(basename(serverEntry))}`);
     }
   };
   await importServerHandler();
@@ -141,7 +140,7 @@ if (import.meta.main) {
   const updateRoutes = ({ specifier }: { specifier: string }) => {
     const config: AlephConfig | undefined = Reflect.get(globalThis, "__ALEPH_CONFIG");
     if (config && config.routeFiles) {
-      const reg = toRoutingRegExp(config.routeFiles);
+      const reg = toRouteRegExp(config.routeFiles);
       if (reg.test(specifier)) {
         initRoutes(reg);
       }
@@ -189,10 +188,10 @@ function handleHMRSocket(req: Request): Response {
     listener.on("create", ({ specifier }) => {
       const config: AlephConfig | undefined = Reflect.get(globalThis, "__ALEPH_CONFIG");
       if (config && config.routeFiles) {
-        const reg = toRoutingRegExp(config.routeFiles);
-        const pattern = reg.exec(specifier);
-        if (pattern) {
-          send({ type: "create", specifier, routePattern: pattern });
+        const reg = toRouteRegExp(config.routeFiles);
+        const routePattern = reg.exec(specifier);
+        if (routePattern) {
+          send({ type: "create", specifier, routePattern });
           return;
         }
       }

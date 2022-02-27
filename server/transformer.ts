@@ -2,17 +2,14 @@ import { createGenerator } from "https://esm.sh/@unocss/core@0.26.2";
 import { fastTransform, transform, transformCSS } from "../compiler/mod.ts";
 import type { ImportMap, TransformOptions } from "../compiler/types.ts";
 import { readCode } from "../lib/fs.ts";
-import { builtinModuleExts, restoreUrl, toLocalPath } from "../lib/path.ts";
+import { builtinModuleExts, restoreUrl, toLocalPath } from "../lib/helpers.ts";
 import { Loader, serveDir } from "../lib/serve.ts";
 import util from "../lib/util.ts";
 import { bundleCSS } from "./bundle.ts";
 import { getAlephPkgUri } from "./config.ts";
 import { isRouteFile } from "./routing.ts";
-import type { DependencyGraph } from "./graph.ts";
+import { DependencyGraph } from "./graph.ts";
 import type { AlephConfig, AtomicCSSConfig, JSXConfig } from "./types.ts";
-
-const enc = new TextEncoder();
-const dec = new TextDecoder();
 
 const cssModuleLoader: Loader = {
   test: (url) => url.pathname.endsWith(".css"),
@@ -20,7 +17,7 @@ const cssModuleLoader: Loader = {
     const cssExports: Record<string, string> = {};
     if (pathname.endsWith(".module.css")) {
       const specifier = "." + pathname;
-      const { exports } = await transformCSS(specifier, dec.decode(rawContent), {
+      const { exports } = await transformCSS(specifier, util.utf8TextDecoder.decode(rawContent), {
         analyzeDependencies: false,
         cssModules: true,
         drafts: {
@@ -35,7 +32,7 @@ const cssModuleLoader: Loader = {
       }
     }
     return {
-      content: enc.encode(`export default ${JSON.stringify(cssExports)};`),
+      content: util.utf8TextEncoder.encode(`export default ${JSON.stringify(cssExports)};`),
       contentType: "application/javascript; charset=utf-8",
     };
   },
@@ -55,7 +52,7 @@ const esModuleLoader: Loader<{ importMap: ImportMap; initialGraphVersion: string
         acc[specifier] = version.toString(16);
         return acc;
       }, {} as Record<string, string>);
-      const { code, deps } = await fastTransform(specifier, dec.decode(rawContent), {
+      const { code, deps } = await fastTransform(specifier, util.utf8TextDecoder.decode(rawContent), {
         importMap: options?.importMap,
         initialGraphVersion: options?.initialGraphVersion,
         graphVersions,
@@ -65,7 +62,7 @@ const esModuleLoader: Loader<{ importMap: ImportMap; initialGraphVersion: string
         inlineCSS: Boolean(config?.atomicCSS?.presets?.length) && isJSX,
       });
       return {
-        content: enc.encode(code),
+        content: util.utf8TextEncoder.encode(code),
       };
     }
     return {
@@ -77,6 +74,9 @@ const esModuleLoader: Loader<{ importMap: ImportMap; initialGraphVersion: string
 /** serve app modules to support module loader that allows you import NON-JS modules like `.css/.vue/.svelet`... */
 export async function serveAppModules(port: number, importMap: ImportMap) {
   try {
+    if (!Reflect.has(globalThis, "serverDependencyGraph")) {
+      Reflect.set(globalThis, "serverDependencyGraph", new DependencyGraph());
+    }
     Deno.env.set("ALEPH_APP_MODULES_PORT", port.toString());
     await serveDir({
       port,
@@ -103,9 +103,10 @@ export type TransformerOptions = {
 
 export const clientModuleTransformer = {
   fetch: async (req: Request, options: TransformerOptions): Promise<Response> => {
-    const clientDependencyGraph: DependencyGraph | undefined = Reflect.get(globalThis, "clientDependencyGraph");
+    let clientDependencyGraph: DependencyGraph | undefined = Reflect.get(globalThis, "clientDependencyGraph");
     if (!clientDependencyGraph) {
-      return new Response("Server is not ready", { status: 500 });
+      clientDependencyGraph = new DependencyGraph();
+      Reflect.set(globalThis, "clientDependencyGraph", clientDependencyGraph);
     }
 
     const { isDev, buildArgsHash } = options;
@@ -118,7 +119,7 @@ export const clientModuleTransformer = {
       ? `${mtime.toString(16)}-${rawCode.length.toString(16)}-${
         rawCode.charCodeAt(Math.floor(rawCode.length / 2)).toString(16)
       }${buildArgsHash.slice(0, 8)}`
-      : util.toHex(await crypto.subtle.digest("sha-1", enc.encode(rawCode + buildArgsHash)));
+      : await util.computeHash("sha-1", rawCode + buildArgsHash);
     if (req.headers.get("If-None-Match") === etag) {
       return new Response(null, { status: 304 });
     }
@@ -129,6 +130,13 @@ export const clientModuleTransformer = {
     if (isCSS) {
       const toJS = searchParams.has("module");
       const { code, deps } = await bundleCSS(specifier, rawCode, {
+        targets: {
+          android: 95,
+          chrome: 95,
+          edge: 95,
+          firefox: 90,
+          safari: 14,
+        },
         minify: !isDev,
         cssModules: toJS && pathname.endsWith(".module.css"),
         resolveAlephPkgUri: true,
