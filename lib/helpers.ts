@@ -2,9 +2,10 @@ import type { Route, RouteMeta } from "../server/types.ts";
 import { createStaticURLPatternResult, type URLPatternResult } from "./url.ts";
 import util from "./util.ts";
 
-export const builtinModuleExts = ["tsx", "jsx", "ts", "mts", "js", "mjs"];
+export const builtinModuleExts = ["tsx", "ts", "mts", "jsx", "js", "mjs"];
 
-export function matchRoute(url: URL, routes: Route[]): [ret: URLPatternResult, route: RouteMeta][] {
+/** match routes against the given url */
+export function matchRoutes(url: URL, routes: Route[]): [ret: URLPatternResult, route: RouteMeta][] {
   let { pathname } = url;
   if (pathname !== "/") {
     pathname = util.trimSuffix(url.pathname, "/").toLowerCase();
@@ -15,12 +16,16 @@ export function matchRoute(url: URL, routes: Route[]): [ret: URLPatternResult, r
       const ret = pattern.exec({ host: url.host, pathname });
       if (ret) {
         matches.push([ret, meta]);
+        // find the nesting index of the route
         if (meta.nesting && meta.pattern.pathname !== "/_app") {
           for (const [p, m] of routes) {
-            const ret = p.exec({ host: url.host, pathname: pathname + "/index" });
-            if (ret) {
-              matches.push([ret, m]);
-              break;
+            const [_, name] = util.splitBy(m.pattern.pathname, "/", true);
+            if (!name.startsWith(":")) {
+              const ret = p.exec({ host: url.host, pathname: pathname + "/index" });
+              if (ret) {
+                matches.push([ret, m]);
+                break;
+              }
             }
           }
         }
@@ -59,8 +64,8 @@ export function matchRoute(url: URL, routes: Route[]): [ret: URLPatternResult, r
 }
 
 /**
- * fix remote url to local path
- * e.g.: https://esm.sh/react@17.0.2?target=es2018 -> /-/esm.sh/react@17.0.2?target=es2018
+ * fix remote url to local path.
+ * e.g. `https://esm.sh/react@17.0.2` -> `/-/esm.sh/react@17.0.2`
  */
 export function toLocalPath(url: string): string {
   if (util.isLikelyHttpURL(url)) {
@@ -82,10 +87,10 @@ export function toLocalPath(url: string): string {
 }
 
 /**
- * store local path to remote url
- * e.g.: /-/esm.sh/react@17.0.2?target=es2018 -> https://esm.sh/react@17.0.2?target=es2018
+ * restore the remote url from local path.
+ * e.g. `/-/esm.sh/react@17.0.2` -> `https://esm.sh/react@17.0.2`
  */
-export function restoreUrl(pathname: string) {
+export function restoreUrl(pathname: string): string {
   let [h, ...rest] = pathname.substring(3).split("/");
   let protocol = "https";
   if (h.startsWith("http_")) {
@@ -94,4 +99,14 @@ export function restoreUrl(pathname: string) {
   }
   const [host, port] = h.split("_");
   return `${protocol}://${host}${port ? ":" + port : ""}/${rest.join("/")}`;
+}
+
+export function globalIt<T>(name: string, fn: () => T): T {
+  const cache: T | undefined = Reflect.get(globalThis, name);
+  if (cache !== undefined) {
+    return cache;
+  }
+  const ret = fn();
+  Reflect.set(globalThis, name, ret);
+  return ret;
 }
