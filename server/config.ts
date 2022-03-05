@@ -2,7 +2,7 @@ import { basename, join } from "https://deno.land/std@0.125.0/path/mod.ts";
 import { JSONC } from "https://deno.land/x/jsonc_parser@v0.0.1/src/jsonc.ts";
 import type { ImportMap } from "../compiler/types.ts";
 import { findFile } from "../lib/fs.ts";
-import { globalIt, toLocalPath } from "../lib/helpers.ts";
+import { globalIt } from "../lib/helpers.ts";
 import log from "../lib/log.ts";
 import util from "../lib/util.ts";
 import { isCanary, VERSION } from "../version.ts";
@@ -52,13 +52,6 @@ export async function loadJSXConfig(): Promise<JSXConfig> {
     } else if (jsx === "react") {
       jsxConfig.jsxRuntime = jsxFactory === "h" ? "preact" : "react";
     }
-  }
-
-  if (
-    Deno.env.get("ALEPH_ENV") === "development" && jsxConfig.jsxImportSource &&
-    util.isLikelyHttpURL(jsxConfig.jsxImportSource)
-  ) {
-    jsxConfig.jsxImportSource = toLocalPath(jsxConfig.jsxImportSource);
   }
 
   return jsxConfig;

@@ -1,6 +1,12 @@
 export default {
   utf8TextEncoder: new TextEncoder(),
   utf8TextDecoder: new TextDecoder(),
+  isInt(a: unknown): a is number {
+    return typeof a === "number" && !Number.isNaN(a) && Number.isInteger(a);
+  },
+  isUint(a: unknown): a is number {
+    return this.isInt(a) && a >= 0;
+  },
   isFilledString(a: unknown): a is string {
     return typeof a === "string" && a.length > 0;
   },
@@ -13,6 +19,14 @@ export default {
   isLikelyHttpURL(s: string): boolean {
     const p = s.slice(0, 8).toLowerCase();
     return p === "https://" || p.slice(0, 7) === "http://";
+  },
+  endsWithAny(str: string, ...suffixes: string[]) {
+    for (const suffix of suffixes) {
+      if (str.endsWith(suffix)) {
+        return true;
+      }
+    }
+    return false;
   },
   trimPrefix(s: string, prefix: string): string {
     if (prefix !== "" && s.startsWith(prefix)) {

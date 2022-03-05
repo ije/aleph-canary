@@ -1,14 +1,10 @@
-import type { Element } from "https://deno.land/x/lol_html@0.0.2/types.d.ts";
-import initWasm, { HTMLRewriter } from "https://deno.land/x/lol_html@0.0.2/mod.js";
-import decodeWasm from "https://deno.land/x/lol_html@0.0.2/wasm.js";
 import { matchRoutes, toLocalPath } from "../lib/helpers.ts";
+import { type Element, HTMLRewriter } from "../lib/html.ts";
 import util from "../lib/util.ts";
 import { getAlephPkgUri } from "./config.ts";
 import type { DependencyGraph } from "./graph.ts";
 import { importRouteModule } from "./routing.ts";
 import type { RenderModule, Route, SSRContext } from "./types.ts";
-
-let lolHtmlReady: Promise<unknown> | boolean = false;
 
 export type RenderOptions = {
   indexHtml: string;
@@ -30,14 +26,6 @@ export default {
       ssr,
     }: RenderOptions,
   ): Promise<Response> {
-    if (lolHtmlReady === false) {
-      lolHtmlReady = initWasm(decodeWasm());
-    }
-    if (lolHtmlReady instanceof Promise) {
-      await lolHtmlReady;
-      lolHtmlReady = true;
-    }
-
     const headers = new Headers({ "Content-Type": "text/html; charset=utf-8" });
     const ssrHTMLRewriter: Map<string, HTMLRewriterHandlers> = new Map();
     if (ssr) {
@@ -67,10 +55,10 @@ export default {
             headCollection.forEach((h) => util.isFilledString(h) && el.before(h, { html: true }));
             if (modules.length > 0) {
               const importStmts = modules.map(({ filename }, idx) =>
-                `import mod_${idx} from ${JSON.stringify(filename.slice(1))};`
+                `import $${idx} from ${JSON.stringify(filename.slice(1))};`
               ).join("");
               const kvs = modules.map(({ filename, data }, idx) =>
-                `${JSON.stringify(filename)}:{defaultExport:mod_${idx}${data !== undefined ? ",withData:true" : ""}}`
+                `${JSON.stringify(filename)}:{defaultExport:$${idx}${data !== undefined ? ",withData:true" : ""}}`
               ).join(",");
               const ssrModules = modules.map(({ url, filename, error, data, dataCacheTtl }) => ({
                 url: url.pathname + url.search,
@@ -140,12 +128,12 @@ export default {
           element(el: Element) {
             let href = el.getAttribute("href");
             if (href) {
-              const isUrl = util.isLikelyHttpURL(href);
-              if (!isUrl) {
+              const isHttpUrl = util.isLikelyHttpURL(href);
+              if (!isHttpUrl) {
                 href = util.cleanPath(href);
                 el.setAttribute("href", href);
               }
-              if (href.endsWith(".css") && !isUrl && isDev) {
+              if (href.endsWith(".css") && !isHttpUrl && isDev) {
                 const specifier = `.${href}`;
                 el.setAttribute("data-module-id", specifier);
                 el.after(

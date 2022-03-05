@@ -3,6 +3,7 @@ import { fastTransform, transform } from "../compiler/mod.ts";
 import type { ImportMap, TransformOptions } from "../compiler/types.ts";
 import { readCode } from "../lib/fs.ts";
 import { builtinModuleExts, restoreUrl, toLocalPath } from "../lib/helpers.ts";
+import log from "../lib/log.ts";
 import { Loader, serveDir } from "../lib/serve.ts";
 import util from "../lib/util.ts";
 import { bundleCSS } from "./bundle.ts";
@@ -29,8 +30,6 @@ const cssModuleLoader: Loader = {
         },
         minify: !isDev,
         cssModules: pathname.endsWith(".module.css"),
-        resolveAlephPkgUri: false,
-        toJS: true,
       },
     );
     const serverDependencyGraph: DependencyGraph | undefined = Reflect.get(globalThis, "serverDependencyGraph");
@@ -89,6 +88,7 @@ const esModuleLoader: Loader<{ importMap: ImportMap }> = {
 /** serve app modules to support module loader that allows you import NON-JS modules like `.css/.vue/.svelet`... */
 export async function serveAppModules(port: number, importMap: ImportMap) {
   try {
+    log.debug(`Serve app modules on http://localhost:${port}`);
     Deno.env.set("ALEPH_APP_MODULES_PORT", port.toString());
     if (!Reflect.has(globalThis, "serverDependencyGraph")) {
       Reflect.set(globalThis, "serverDependencyGraph", new DependencyGraph());
@@ -100,7 +100,7 @@ export async function serveAppModules(port: number, importMap: ImportMap) {
     });
   } catch (error) {
     if (error instanceof Deno.errors.AddrInUse) {
-      await serveAppModules(port + 1, importMap);
+      serveAppModules(port + 1, importMap);
     } else {
       throw error;
     }
@@ -108,23 +108,17 @@ export async function serveAppModules(port: number, importMap: ImportMap) {
 }
 
 export type TransformerOptions = {
-  isDev: boolean;
-  buildTarget: TransformOptions["target"];
-  buildArgsHash: string;
-  jsxConfig: JSXConfig;
-  importMap: ImportMap;
   atomicCSS?: AtomicCSSConfig;
+  buildHash: string;
+  buildTarget?: TransformOptions["target"];
+  importMap: ImportMap;
+  isDev: boolean;
+  jsxConfig: JSXConfig;
 };
 
 export const clientModuleTransformer = {
   fetch: async (req: Request, options: TransformerOptions): Promise<Response> => {
-    let clientDependencyGraph: DependencyGraph | undefined = Reflect.get(globalThis, "clientDependencyGraph");
-    if (!clientDependencyGraph) {
-      clientDependencyGraph = new DependencyGraph();
-      Reflect.set(globalThis, "clientDependencyGraph", clientDependencyGraph);
-    }
-
-    const { isDev, buildArgsHash } = options;
+    const { isDev, buildHash } = options;
     const { pathname, searchParams, search } = new URL(req.url);
     const specifier = pathname.startsWith("/-/") ? restoreUrl(pathname + search) : `.${pathname}`;
     const isJSX = pathname.endsWith(".jsx") || pathname.endsWith(".tsx");
@@ -133,10 +127,16 @@ export const clientModuleTransformer = {
     const etag = mtime
       ? `${mtime.toString(16)}-${rawCode.length.toString(16)}-${
         rawCode.charCodeAt(Math.floor(rawCode.length / 2)).toString(16)
-      }${buildArgsHash.slice(0, 8)}`
-      : await util.computeHash("sha-1", rawCode + buildArgsHash);
+      }${buildHash.slice(0, 8)}`
+      : await util.computeHash("sha-1", rawCode + buildHash);
     if (req.headers.get("If-None-Match") === etag) {
       return new Response(null, { status: 304 });
+    }
+
+    let clientDependencyGraph: DependencyGraph | undefined = Reflect.get(globalThis, "clientDependencyGraph");
+    if (!clientDependencyGraph) {
+      clientDependencyGraph = new DependencyGraph();
+      Reflect.set(globalThis, "clientDependencyGraph", clientDependencyGraph);
     }
 
     let resBody = "";
@@ -154,7 +154,6 @@ export const clientModuleTransformer = {
         },
         minify: !isDev,
         cssModules: toJS && pathname.endsWith(".module.css"),
-        resolveAlephPkgUri: true,
         hmr: isDev,
         toJS,
       });
@@ -175,7 +174,7 @@ export const clientModuleTransformer = {
       const { code, deps } = await transform(specifier, rawCode, {
         ...jsxConfig,
         stripDataExport: isRouteFile(specifier),
-        target: buildTarget,
+        target: buildTarget ?? (isDev ? "es2022" : "es2015"),
         alephPkgUri,
         graphVersions,
         initialGraphVersion: clientDependencyGraph.initialVersion.toString(16),
@@ -193,6 +192,7 @@ export const clientModuleTransformer = {
           `\nimport { applyCSS as __applyCSS } from "${
             toLocalPath(alephPkgUri)
           }/framework/core/style.ts";\n__applyCSS(${JSON.stringify(specifier)}, ${JSON.stringify(inlineCSS)});`;
+        deps?.push({ specifier: alephPkgUri + "/framework/core/style.ts" });
         clientDependencyGraph.mark(specifier, { deps });
       } else {
         resBody = code;
