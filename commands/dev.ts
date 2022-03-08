@@ -1,12 +1,12 @@
-import { basename, relative, resolve } from "https://deno.land/std@0.125.0/path/mod.ts";
-import { serve as stdServe, serveTls } from "https://deno.land/std@0.125.0/http/server.ts";
+import { basename, relative, resolve } from "https://deno.land/std@0.128.0/path/mod.ts";
+import { serve as stdServe, serveTls } from "https://deno.land/std@0.128.0/http/server.ts";
 import mitt, { Emitter } from "https://esm.sh/mitt@3.0.0";
 import { getFlag, parse, parsePortNumber } from "../lib/flags.ts";
 import { existsDir, findFile, watchFs } from "../lib/fs.ts";
 import { builtinModuleExts } from "../lib/helpers.ts";
 import log, { blue } from "../lib/log.ts";
 import util from "../lib/util.ts";
-import { loadImportMap } from "../server/config.ts";
+import { importLoaders, loadImportMap } from "../server/config.ts";
 import { serve } from "../server/mod.ts";
 import { initRoutes, toRouteRegExp } from "../server/routing.ts";
 import type { DependencyGraph } from "../server/graph.ts";
@@ -112,7 +112,8 @@ if (import.meta.main) {
   }
 
   const importMap = await loadImportMap();
-  serveAppModules(6060, { importMap });
+  const loaders = await importLoaders(importMap);
+  serveAppModules(6060, { importMap, loaders });
 
   log.info(`Watching files for changes...`);
   watchFs(workingDir, (kind, path) => {

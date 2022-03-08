@@ -1,10 +1,10 @@
-import { basename, resolve } from "https://deno.land/std@0.125.0/path/mod.ts";
-import { serve as stdServe, serveTls } from "https://deno.land/std@0.125.0/http/server.ts";
+import { basename, resolve } from "https://deno.land/std@0.128.0/path/mod.ts";
+import { serve as stdServe, serveTls } from "https://deno.land/std@0.128.0/http/server.ts";
 import { getFlag, parse, parsePortNumber } from "../lib/flags.ts";
 import { existsDir, findFile } from "../lib/fs.ts";
 import { builtinModuleExts } from "../lib/helpers.ts";
 import log, { blue } from "../lib/log.ts";
-import { loadImportMap } from "../server/config.ts";
+import { importLoaders, loadImportMap } from "../server/config.ts";
 import { build } from "../server/build.ts";
 import { serve } from "../server/mod.ts";
 import { serveAppModules } from "../server/transformer.ts";
@@ -47,7 +47,9 @@ if (import.meta.main) {
   }
 
   const ac = new AbortController();
-  serveAppModules(6060, { importMap: await loadImportMap(), signal: ac.signal });
+  const importMap = await loadImportMap();
+  const loaders = await importLoaders(importMap);
+  serveAppModules(6060, { importMap, loaders, signal: ac.signal });
 
   let serverEntry = await findFile(workingDir, builtinModuleExts.map((ext) => `server.${ext}`));
   if (serverEntry) {

@@ -1,4 +1,4 @@
-import { join } from "https://deno.land/std@0.125.0/path/mod.ts";
+import { join } from "https://deno.land/std@0.128.0/path/mod.ts";
 import cache from "./cache.ts";
 import util from "./util.ts";
 
@@ -46,13 +46,15 @@ export async function getFiles(
   __path: string[] = [],
 ): Promise<string[]> {
   const list: string[] = [];
-  for await (const dirEntry of Deno.readDir(dir)) {
-    if (dirEntry.isDirectory) {
-      list.push(...await getFiles(join(dir, dirEntry.name), filter, [...__path, dirEntry.name]));
-    } else {
-      const filename = [".", ...__path, dirEntry.name].join("/");
-      if (!filter || filter(filename)) {
-        list.push(filename);
+  if (await existsDir(dir)) {
+    for await (const dirEntry of Deno.readDir(dir)) {
+      if (dirEntry.isDirectory) {
+        list.push(...await getFiles(join(dir, dirEntry.name), filter, [...__path, dirEntry.name]));
+      } else {
+        const filename = [".", ...__path, dirEntry.name].join("/");
+        if (!filter || filter(filename)) {
+          list.push(filename);
+        }
       }
     }
   }
