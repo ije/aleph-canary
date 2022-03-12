@@ -1,5 +1,5 @@
 /** `VERSION` managed by https://deno.land/x/publish */
-export const VERSION = "0.0.44";
+export const VERSION = "0.0.45";
 
 /** whether is canary version */
 export const isCanary = true;
