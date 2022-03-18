@@ -69,7 +69,10 @@ export default {
                 dataCacheTtl,
               }));
               el.before(
-                `<script id="ssr-modules" type="application/json">${JSON.stringify(ssrModules)}</script>`,
+                `<script id="ssr-modules" type="application/json">${
+                  // replace "/" to "\/" to prevent xss
+                  JSON.stringify(ssrModules).replaceAll("/", "\\/")
+                }</script>`,
                 {
                   html: true,
                 },
