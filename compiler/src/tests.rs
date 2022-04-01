@@ -77,17 +77,26 @@ fn import_resolving() {
       import React from "https://cdn.esm.sh/v66/react-dom@16.0.4"
       import { foo } from "~/foo.ts"
       import Layout from "./Layout.tsx"
+      import "https://esm.sh/@fullcalendar/daygrid?css"
       import "../../style/app.css"
 
       foo()
       export default () => <Layout />
+
+      setTimeout(() => {
+        import("https://esm.sh/asksomeonelse")
+        new Worker("https://esm.sh/asksomeonelse")
+      }, 1000)
     "#;
   let (code, _) = transform("./pages/blog/$id.tsx", source, false, &EmitOptions::default());
   assert!(code.contains("\"/-/esm.sh/react@17.0.2\""));
   assert!(code.contains("\"/-/cdn.esm.sh/v64/react-dom@17.0.2\""));
   assert!(code.contains("\"../../foo.ts?v=100\""));
   assert!(code.contains("\"./Layout.tsx\""));
+  assert!(code.contains("\"/-/esm.sh/@fullcalendar/daygrid?css&module\""));
   assert!(code.contains("\"../../style/app.css?module\""));
+  assert!(code.contains("import(\"/-/esm.sh/asksomeonelse\")"));
+  assert!(code.contains("new Worker(\"/-/esm.sh/asksomeonelse\")"));
 }
 
 #[test]
