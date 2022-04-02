@@ -1,16 +1,30 @@
 import { useEffect, useRef, useState } from "react";
-import type { editor } from "https://esm.sh/monaco-editor@0.33.0";
 
 export default function Index() {
   const [ready, setReady] = useState(false);
-  const editorRef = useRef<editor.IStandaloneCodeEditor>();
   const editorContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     (async () => {
-      const { createEditor, createModel } = await import("../lib/editor.ts");
-      editorRef.current = createEditor(editorContainerRef.current!);
-      editorRef.current.setModel(createModel("mod.ts", `console.log("Hello, world!");`));
+      const { initMonaco, createEditor, createModel, KeyCode, KeyMod } = await import("../lib/editor.ts");
+      await initMonaco();
+      const editor = createEditor(editorContainerRef.current!);
+      editor.addAction({
+        id: "export_to_github",
+        label: "Deploy: Export Playground to GitHub",
+        run() {
+          location.href = `/projects/{id}/settings`;
+        },
+      });
+      editor.addAction({
+        id: "save",
+        label: "Deploy: Save & Deploy",
+        keybindings: [KeyMod.CtrlCmd | KeyCode.KeyS],
+        run() {
+          alert("onSave");
+        },
+      });
+      editor.setModel(createModel("mod.ts", `console.log("Hello, world!");`));
       setReady(true);
     })();
   }, []);
