@@ -103,8 +103,7 @@ export async function build(
     return importUrl === alephPkgUri + "/server/mod.ts" ||
       // since deno deploy doesn't support importMap, we need to resolve the 'react' import
       importUrl.startsWith(alephPkgUri + "/framework/react/") ||
-      importUrl.startsWith(`http://localhost:${Deno.env.get("ALEPH_APP_MODULES_PORT")}/`) ||
-      importUrl.endsWith(".css");
+      importUrl.startsWith(`http://localhost:${Deno.env.get("ALEPH_APP_MODULES_PORT")}/`);
   };
 
   // build server entry
@@ -165,30 +164,26 @@ export async function build(
           }
           const res = await cache(url.href);
           const contents = await res.text();
-          const ext = extname(url.pathname).slice(1);
-          let loader = ext;
+          let ext = extname(url.pathname).slice(1);
           if (ext === "mjs") {
-            loader = "js";
+            ext = "js";
           } else if (ext === "mts") {
-            loader = "ts";
-          } else if (ext === "pcss" || ext === "postcss") {
-            loader = "css";
-          }
-          const ctype = res.headers.get("Content-Type");
-          if (ctype?.startsWith("application/javascript")) {
-            loader = "js";
-          } else if (ctype?.startsWith("application/typescript")) {
-            loader = "ts";
-          } else if (ctype?.startsWith("text/jsx")) {
-            loader = "jsx";
-          } else if (ctype?.startsWith("text/tsx")) {
-            loader = "tsx";
-          } else if (ctype?.startsWith("text/css")) {
-            loader = "css";
+            ext = "ts";
+          } else if (!builtinModuleExts.includes(ext)) {
+            const ctype = res.headers.get("Content-Type");
+            if (ctype?.startsWith("application/javascript")) {
+              ext = "js";
+            } else if (ctype?.startsWith("application/typescript")) {
+              ext = "ts";
+            } else if (ctype?.startsWith("text/jsx")) {
+              ext = "jsx";
+            } else if (ctype?.startsWith("text/tsx")) {
+              ext = "tsx";
+            }
           }
           return {
             contents,
-            loader: loader as unknown as Loader,
+            loader: ext as unknown as Loader,
           };
         });
       },
