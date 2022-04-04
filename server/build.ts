@@ -101,6 +101,7 @@ export async function build(
 
   const forceBundle = (importUrl: string) => {
     return importUrl === alephPkgUri + "/server/mod.ts" ||
+      importUrl === alephPkgUri + "/server/transformer.ts" ||
       // since deno deploy doesn't support importMap, we need to resolve the 'react' import
       importUrl.startsWith(alephPkgUri + "/framework/react/") ||
       importUrl.startsWith(`http://localhost:${Deno.env.get("ALEPH_APP_MODULES_PORT")}/`);
@@ -214,6 +215,7 @@ export async function build(
       }
     }
   }
+  tasks.push(`${alephPkgUri}/framework/core/style.ts`);
 
   // transform client modules
   const serverHandler: FetchHandler | undefined = Reflect.get(globalThis, "__ALEPH_SERVER_HANDLER");
