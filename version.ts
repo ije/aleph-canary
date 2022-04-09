@@ -1,7 +1,7 @@
 import { resolve } from "https://deno.land/std@0.128.0/path/mod.ts";
 
 /** `VERSION` managed by https://deno.land/x/publish */
-export const VERSION = "0.0.66";
+export const VERSION = "0.0.67";
 
 /** whether is canary version */
 export const isCanary = true;
@@ -36,7 +36,9 @@ export async function prepublish(): Promise<boolean> {
   console.log("Copying files...");
   await Promise.all(tasks);
 
-  return true;
+  if (!window.confirm("Re-uild compiler?")) {
+    return true;
+  }
 
   const p = Deno.run({
     cmd: ["deno", "run", "-A", "build.ts"],

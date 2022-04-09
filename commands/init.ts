@@ -1,9 +1,9 @@
-import { Untar } from "https://deno.land/std@0.128.0/archive/tar.ts";
-import { Buffer } from "https://deno.land/std@0.128.0/io/buffer.ts";
-import { copy, readAll } from "https://deno.land/std@0.128.0/streams/conversion.ts";
-import { blue, cyan, dim, green, red } from "https://deno.land/std@0.128.0/fmt/colors.ts";
-import { ensureDir } from "https://deno.land/std@0.128.0/fs/ensure_dir.ts";
-import { basename, join } from "https://deno.land/std@0.128.0/path/mod.ts";
+import { Untar } from "https://deno.land/std@0.134.0/archive/tar.ts";
+import { Buffer } from "https://deno.land/std@0.134.0/io/buffer.ts";
+import { copy, readAll } from "https://deno.land/std@0.134.0/streams/conversion.ts";
+import { blue, cyan, dim, green, red } from "https://deno.land/std@0.134.0/fmt/colors.ts";
+import { ensureDir } from "https://deno.land/std@0.134.0/fs/ensure_dir.ts";
+import { basename, join } from "https://deno.land/std@0.134.0/path/mod.ts";
 import { gunzip } from "https://deno.land/x/denoflate@1.2.1/mod.ts";
 import { existsDir } from "../lib/fs.ts";
 import log from "../lib/log.ts";
@@ -92,6 +92,7 @@ export default async function (nameArg: string | undefined, template = "react") 
         `${alephPkgUri}/types.d.ts`,
       ],
     },
+    "importMap": "import_map.json",
     "tasks": {
       "dev": `deno run -A ${alephPkgUri}/cli.ts dev`,
       "start": `deno run -A ${alephPkgUri}/cli.ts start`,
@@ -144,9 +145,8 @@ export default async function (nameArg: string | undefined, template = "react") 
     };
     const settigns = {
       "deno.enable": true,
-      "deno.unstable": true,
+      "deno.lint": true,
       "deno.config": "./deno.json",
-      "deno.importMap": "./import_map.json",
       "deno.suggest.imports.hosts": {
         "https://deno.land": true,
         "https://esm.sh": false,
