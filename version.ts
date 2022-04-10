@@ -1,13 +1,10 @@
 import { resolve } from "https://deno.land/std@0.128.0/path/mod.ts";
 
 /** `VERSION` managed by https://deno.land/x/publish */
-export const VERSION = "0.0.67";
+export const VERSION = "0.0.68";
 
 /** whether is canary version */
 export const isCanary = true;
-
-/** minimum supported deno version */
-export const minDenoVersion = "1.18.2";
 
 /** `prepublish` will be invoked before publish */
 export async function prepublish(): Promise<boolean> {
@@ -36,7 +33,7 @@ export async function prepublish(): Promise<boolean> {
   console.log("Copying files...");
   await Promise.all(tasks);
 
-  if (!window.confirm("Re-uild compiler?")) {
+  if (!window.confirm("Re-build compiler?")) {
     return true;
   }
 

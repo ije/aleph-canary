@@ -15,7 +15,6 @@ const commands = {
   "dev": "Start the app in `development` mode",
   "start": "Start the app in `production` mode",
   "build": "Build the app into a worker",
-  "upgrade": "Upgrade Aleph.js CLI",
 };
 
 const helpMessage = `Aleph.js v${VERSION}
@@ -81,13 +80,6 @@ async function main() {
   if (command === "init") {
     const { default: init } = await import(`./commands/init.ts`);
     await init(args[0], options?.template);
-    return;
-  }
-
-  // invoke `upgrade` command
-  if (command === "upgrade") {
-    const { default: upgrade } = await import(`./commands/upgrade.ts`);
-    await upgrade(options.v || options.version || args[0] || "latest");
     return;
   }
 
@@ -225,10 +217,17 @@ async function pipe(reader: Deno.Reader, writer: Deno.Writer) {
   }
 }
 
+const regStackLoc = /(http:\/\/localhost:60\d{2}\/.+)(:\d+:\d+)/;
+
 function fixLine(line: string): string | null {
   const l = stripColor(line);
   if (l.startsWith(`Download http://localhost:`)) {
     return null;
+  }
+  const ret = l.match(regStackLoc);
+  if (ret) {
+    const url = new URL(ret[1]);
+    return l.replace(ret[0], `.${url.pathname}${ret[2]}`);
   }
   return line;
 }
