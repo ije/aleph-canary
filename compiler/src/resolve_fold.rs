@@ -1,20 +1,26 @@
 use crate::resolver::Resolver;
 use crate::swc_helpers::{is_call_expr_by_name, new_str};
 use std::{cell::RefCell, rc::Rc};
-use swc_common::DUMMY_SP;
+use swc_common::{Span, DUMMY_SP};
 use swc_ecmascript::ast::*;
 use swc_ecmascript::visit::{noop_fold_type, Fold, FoldWith};
 
-pub fn resolve_fold(resolver: Rc<RefCell<Resolver>>, strip_data_export: bool) -> impl Fold {
+pub fn resolve_fold(
+  resolver: Rc<RefCell<Resolver>>,
+  strip_data_export: bool,
+  mark_import_src_location: bool,
+) -> impl Fold {
   ResolveFold {
     resolver,
     strip_data_export,
+    mark_import_src_location,
   }
 }
 
 pub struct ResolveFold {
   resolver: Rc<RefCell<Resolver>>,
   strip_data_export: bool,
+  mark_import_src_location: bool,
 }
 
 impl Fold for ResolveFold {
@@ -35,7 +41,11 @@ impl Fold for ResolveFold {
                 ModuleItem::ModuleDecl(ModuleDecl::Import(import_decl))
               } else {
                 let mut resolver = self.resolver.borrow_mut();
-                let resolved_url = resolver.resolve(import_decl.src.value.as_ref(), &import_decl.src.span, false);
+                let resolved_url = resolver.resolve(
+                  import_decl.src.value.as_ref(),
+                  false,
+                  mark_span(&import_decl.src.span, self.mark_import_src_location),
+                );
                 ModuleItem::ModuleDecl(ModuleDecl::Import(ImportDecl {
                   src: new_str(&resolved_url),
                   ..import_decl
@@ -62,7 +72,11 @@ impl Fold for ResolveFold {
                 }))
               } else {
                 let mut resolver = self.resolver.borrow_mut();
-                let resolved_url = resolver.resolve(src.value.as_ref(), &src.span, false);
+                let resolved_url = resolver.resolve(
+                  src.value.as_ref(),
+                  false,
+                  mark_span(&src.span, self.mark_import_src_location),
+                );
                 ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(NamedExport {
                   span,
                   specifiers,
@@ -75,13 +89,18 @@ impl Fold for ResolveFold {
             // match: export * from "https://esm.sh/react"
             ModuleDecl::ExportAll(ExportAll { src, span, asserts }) => {
               let mut resolver = self.resolver.borrow_mut();
-              let resolved_url = resolver.resolve(src.value.as_ref(), &src.span, false);
+              let resolved_url = resolver.resolve(
+                src.value.as_ref(),
+                false,
+                mark_span(&src.span, self.mark_import_src_location),
+              );
               ModuleItem::ModuleDecl(ModuleDecl::ExportAll(ExportAll {
                 span,
                 src: new_str(&resolved_url),
                 asserts,
               }))
             }
+            // match: export const data = { ... }
             ModuleDecl::ExportDecl(ExportDecl {
               decl: Decl::Var(var),
               span,
@@ -146,7 +165,7 @@ impl Fold for ResolveFold {
     items
   }
 
-  // fold&resolve worker import url
+  // resolve worker import url
   fn fold_new_expr(&mut self, mut new_expr: NewExpr) -> NewExpr {
     let ok = match new_expr.callee.as_ref() {
       Expr::Ident(id) => id.sym.as_ref().eq("Worker"),
@@ -166,7 +185,11 @@ impl Fold for ResolveFold {
         };
         if let Some(src) = src {
           let mut resolver = self.resolver.borrow_mut();
-          let new_src = resolver.resolve(src.value.as_ref(), &src.span, true);
+          let new_src = resolver.resolve(
+            src.value.as_ref(),
+            true,
+            mark_span(&src.span, self.mark_import_src_location),
+          );
 
           args[0] = ExprOrSpread {
             spread: None,
@@ -179,7 +202,7 @@ impl Fold for ResolveFold {
     new_expr.fold_children_with(self)
   }
 
-  // fold&resolve dynamic import url
+  // resolve dynamic import url
   fn fold_call_expr(&mut self, mut call: CallExpr) -> CallExpr {
     if is_call_expr_by_name(&call, "import") {
       let src = match call.args.first() {
@@ -194,7 +217,11 @@ impl Fold for ResolveFold {
       };
       if let Some(src) = src {
         let mut resolver = self.resolver.borrow_mut();
-        let new_src = resolver.resolve(src.value.as_ref(), &src.span, true);
+        let new_src = resolver.resolve(
+          src.value.as_ref(),
+          true,
+          mark_span(&src.span, self.mark_import_src_location),
+        );
 
         call.args[0] = ExprOrSpread {
           spread: None,
@@ -204,5 +231,13 @@ impl Fold for ResolveFold {
     }
 
     call.fold_children_with(self)
+  }
+}
+
+fn mark_span(span: &Span, ok: bool) -> Option<Span> {
+  if ok {
+    Some(span.clone())
+  } else {
+    None
   }
 }
