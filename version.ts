@@ -1,7 +1,7 @@
 import { resolve } from "https://deno.land/std@0.128.0/path/mod.ts";
 
 /** `VERSION` managed by https://deno.land/x/publish */
-export const VERSION = "0.0.74";
+export const VERSION = "0.0.75";
 
 /** whether is canary version */
 export const isCanary = true;
