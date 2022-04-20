@@ -1,10 +1,10 @@
-import { readableStreamFromReader } from "https://deno.land/std@0.134.0/streams/conversion.ts";
+import { readableStreamFromReader } from "https://deno.land/std@0.135.0/streams/conversion.ts";
 import log from "../lib/log.ts";
 import type { AlephConfig } from "./types.ts";
 
 export default {
   fetch: async (req: Request): Promise<Response> => {
-    const config: AlephConfig | undefined = Reflect.get(globalThis, "__ALEPH_SERVER_CONFIG");
+    const config: AlephConfig | undefined = Reflect.get(globalThis, "__ALEPH_CONFIG");
     const outputDir = config?.build?.outputDir ?? "dist";
     const { pathname, searchParams } = new URL(req.url);
     try {

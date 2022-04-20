@@ -1,7 +1,7 @@
 import { resolve } from "https://deno.land/std@0.128.0/path/mod.ts";
 
 /** `VERSION` managed by https://deno.land/x/publish */
-export const VERSION = "0.0.75";
+export const VERSION = "0.0.76";
 
 /** whether is canary version */
 export const isCanary = true;
@@ -33,7 +33,7 @@ export async function prepublish(): Promise<boolean> {
   console.log("Copying files...");
   await Promise.all(tasks);
 
-  if (!window.confirm("Re-build compiler?")) {
+  if (!window.confirm("Build compiler wasm?")) {
     return true;
   }
 

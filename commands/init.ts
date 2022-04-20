@@ -1,9 +1,9 @@
-import { Untar } from "https://deno.land/std@0.134.0/archive/tar.ts";
-import { Buffer } from "https://deno.land/std@0.134.0/io/buffer.ts";
-import { copy, readAll } from "https://deno.land/std@0.134.0/streams/conversion.ts";
-import { blue, cyan, dim, green, red } from "https://deno.land/std@0.134.0/fmt/colors.ts";
-import { ensureDir } from "https://deno.land/std@0.134.0/fs/ensure_dir.ts";
-import { basename, join } from "https://deno.land/std@0.134.0/path/mod.ts";
+import { Untar } from "https://deno.land/std@0.135.0/archive/tar.ts";
+import { Buffer } from "https://deno.land/std@0.135.0/io/buffer.ts";
+import { copy, readAll } from "https://deno.land/std@0.135.0/streams/conversion.ts";
+import { blue, cyan, dim, green, red } from "https://deno.land/std@0.135.0/fmt/colors.ts";
+import { ensureDir } from "https://deno.land/std@0.135.0/fs/ensure_dir.ts";
+import { basename, join } from "https://deno.land/std@0.135.0/path/mod.ts";
 import { gunzip } from "https://deno.land/x/denoflate@1.2.1/mod.ts";
 import { existsDir } from "../lib/fs.ts";
 import log from "../lib/log.ts";
@@ -75,6 +75,7 @@ export default async function (nameArg: string | undefined, template = "react") 
   const importMap = {
     imports: {
       "~/": "./",
+      "@unocss/": `${alephPkgUri}/lib/@unocss/`,
       "aleph/": `${alephPkgUri}/`,
       "aleph/server": `${alephPkgUri}/server/mod.ts`,
     },
@@ -169,9 +170,9 @@ export default async function (nameArg: string | undefined, template = "react") 
     "",
     green("Aleph.js is ready to go!"),
     `${dim("▲")} cd ${name}`,
-    `${dim("▲")} aleph dev    ${dim("# start the app in `development` mode")}`,
-    `${dim("▲")} aleph start  ${dim("# start the app in `production` mode")}`,
-    `${dim("▲")} aleph build  ${dim("# build the app into a worker for serverless platforms like Deno Deploy")}`,
+    `${dim("▲")} deno task dev    ${dim("# start the app in `development` mode")}`,
+    `${dim("▲")} deno task start  ${dim("# start the app in `production` mode")}`,
+    `${dim("▲")} deno task build  ${dim("# build the app into a worker for serverless platforms like Deno Deploy")}`,
     "",
     `Docs: ${cyan("https://alephjs.org/docs")}`,
     `Bugs: ${cyan("https://alephjs.org.com/alephjs/aleph.js/issues")}`,
